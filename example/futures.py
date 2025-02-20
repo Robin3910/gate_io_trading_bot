@@ -19,7 +19,9 @@ def futures_demo(run_config):
 
     # Initialize API client
     # Setting host is optional. It defaults to https://api.gateio.ws/api/v4
-    config = Configuration(key=run_config.api_key, secret=run_config.api_secret, host=run_config.host_used)
+    # 实盘交易: https://api.gateio.ws/api/v4
+    # 合约模拟交易: https://fx-api-testnet.gateio.ws/api/v4
+    config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
     futures_api = FuturesApi(ApiClient(config))
 
     # update position leverage
@@ -110,3 +112,8 @@ def futures_demo(run_config):
 
         # example to update position margin
         futures_api.update_position_margin(settle, contract, "0.01")
+
+
+
+
+futures_demo(RunConfig())

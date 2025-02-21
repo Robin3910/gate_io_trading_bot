@@ -16,11 +16,12 @@ from gate_api.exceptions import GateApiException
 app = Flask(__name__)
 
 # TODO 待办
-# 1、测试一下monitor_price的逻辑
+# 1、测试一下monitor_price的逻辑 - done
 # 2、需要补充一个页面，让用户可以配置API和secret，也可以手动停止策略的运行
 # 3、在页面中需要展示当前的策略运行情况，比如当前的仓位，当前的挂单，当前的止损单，当前的移动止盈单
 # 4、补充处理失败的时候，微信发出告警
-# 5、发现一个问题：挂单价格有限制，不能挂离当前价格太远，否则会报错，需要等价格快到了再去挂单
+# 5、测试指标到服务器的逻辑
+# 6、待写逻辑：如果亏损了，下一次要减少开仓。如果盈利了，下次再恢复回来
 
 # 配置信息
 WX_TOKEN = CONFIG.WX_TOKEN
@@ -107,6 +108,7 @@ def place_order(symbol, side, qty, price, order_type="limit"):
         return str(order_response.id)
     except GateApiException as ex:
         logger.error(f"error encountered creating futures order: {ex}")
+        send_wx_notification(f"{symbol}|下单失败", f"下单失败: {ex}")
         return
 
 def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule=1):
@@ -130,6 +132,7 @@ def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule
         return str(order_response.id)
     except GateApiException as ex:
         logger.error(f"error encountered creating futures order: {ex}")
+        send_wx_notification(f"{symbol}|挂单失败", f"挂单失败: {ex}")
         return
 
 def query_order(symbol, order_id):
@@ -149,6 +152,7 @@ def close_position(symbol):
         return order_response.id
     except GateApiException as ex:
         logger.error(f'{symbol}|平仓失败，错误: {ex}')
+        send_wx_notification(f"{symbol}|平仓失败", f"平仓失败: {ex}")
         return None
 
 def get_position(symbol):
@@ -186,6 +190,7 @@ def batch_place_order(symbol, order_list):
         return order_response
     except GateApiException as ex:
         logger.error(f'{symbol}|批量下单失败，错误: {ex}')
+        send_wx_notification(f"{symbol}|批量下单失败", f"批量下单失败: {ex}")
         return None
 
 def get_pending_orders(symbol):
@@ -203,6 +208,7 @@ def cancel_order(symbol, order_id):
         logger.info(f'{symbol}|取消挂单成功: {order_response}')
     except GateApiException as ex:
         logger.error(f'{symbol}|取消挂单失败，错误: {ex}')
+        send_wx_notification(f"{symbol}|取消挂单失败", f"取消挂单失败: {ex}")
 
 def cancel_all_orders(symbol):
     try:
@@ -215,6 +221,7 @@ def cancel_all_orders(symbol):
             logger.info(f'{symbol}|没有挂单')
     except GateApiException as ex:
         logger.error(f'{symbol}|取消挂单失败，错误: {ex}')
+        send_wx_notification(f"{symbol}|取消所有挂单失败", f"取消挂单失败: {ex}")
 
 def set_position_mode(is_dual_mode):
     """设置持仓模式"""
@@ -233,6 +240,7 @@ def batch_cancel_orders(order_id_list):
         return order_response
     except GateApiException as ex:
         logger.error(f'批量撤销挂单失败，错误: {ex}')
+        send_wx_notification(f"{symbol}|批量撤销挂单失败", f"批量撤销挂单失败: {ex}")
         return None
 
 def get_single_contract(symbol):
@@ -313,27 +321,16 @@ class GridTrader:
         if data['direction'] != self.direction:
             # 反转的时候，需要更新交易参数
             return True
-        elif data['direction'] == self.direction and position == 0 and self.direction == "buy" and float(data['up_line']) >= self.up_line:
-            # 无仓位的时候，如果上沿价格上涨，则需要更新交易参数
+        elif data['direction'] == self.direction and position == 0 and self.direction == "buy" and (float(data['up_line']) != self.up_line or float(data['down_line']) != self.down_line):
+            # 无仓位的时候，如果上下沿价格改变，则需要更新交易参数
             return True
-        elif data['direction'] == self.direction and position == 0 and self.direction == "sell" and float(data['up_line']) <= self.up_line:
-            # 无仓位的时候，如果上沿价格下跌，则需要更新交易参数
+        elif data['direction'] == self.direction and position == 0 and self.direction == "sell" and (float(data['up_line']) != self.up_line or float(data['down_line']) != self.down_line):
+            # 无仓位的时候，如果上下沿价格改变，则需要更新交易参数
             return True
         else:
             return False
 
     def update_trading_params(self, data):
-        # if not self.is_need_update_trading_params(data):
-        #     return
-
-        # # 当前如果处于运行状态，则无需更改交易参数
-        # if data['direction'] == self.direction and self.running:
-        #     logger.info(f'{self.symbol} 交易方向未发生变化，无需更新交易参数')
-        #     return
-
-        # elif data['direction'] != self.direction or \
-        #     (data["direction"] == self.direction and float(data["up_line"]) != self.up_line):
-        #     self.running = True
         if self.is_need_update_trading_params(data):
             try:
                 # 平仓

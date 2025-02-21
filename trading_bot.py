@@ -10,7 +10,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import constant as CONFIG
 from decimal import Decimal as D, ROUND_UP, getcontext
-from gate_api import ApiClient, Configuration, FuturesApi, FuturesOrder, Transfer, WalletApi
+from gate_api import ApiClient, Configuration, FuturesApi, FuturesOrder, FuturesPriceTriggeredOrder,FuturesPriceTrigger,FuturesInitialOrder, Transfer, WalletApi
 from gate_api.exceptions import GateApiException
 
 app = Flask(__name__)
@@ -109,6 +109,28 @@ def place_order(symbol, side, qty, price, order_type="limit"):
         logger.error(f"error encountered creating futures order: {ex}")
         return
 
+def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule=1):
+    """下单"""
+    if order_type == "limit":
+        tif = "gtc"
+    else:
+        tif = "ioc"
+        price = 0
+    
+
+    if side == "sell":
+        qty = -qty
+    
+    # rule 1 代表价格 >= 触发价时触发， 2 代表价格 <= 触发价时触发
+    initial_order = FuturesInitialOrder(contract=symbol, size=qty, price=str(price), tif=tif)
+    trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price=str(price), rule=rule)
+    order = FuturesPriceTriggeredOrder(initial=initial_order, trigger=trigger_order)
+    try:
+        order_response = futures_api.create_price_triggered_order(SETTLE, order)
+        return str(order_response.id)
+    except GateApiException as ex:
+        logger.error(f"error encountered creating futures order: {ex}")
+        return
 
 def query_order(symbol, order_id):
     """查询订单"""
@@ -260,7 +282,7 @@ trading_pairs = {}
 
 class GridTrader:
     def __init__(self, symbol):
-        self.symbol = prefix_symbol(symbol)
+        self.symbol = symbol
         self.total_usdt = 0
         self.every_zone_usdt = 0
         self.loss_decrease = 0
@@ -285,15 +307,34 @@ class GridTrader:
 
         logger.info(f'{symbol} GridTrader 初始化完成')
 
+    def is_need_update_trading_params(self, data):
+        """判断是否需要更新交易参数"""
+        position = get_position(self.symbol)
+        if data['direction'] != self.direction:
+            # 反转的时候，需要更新交易参数
+            return True
+        elif data['direction'] == self.direction and position == 0 and self.direction == "buy" and float(data['up_line']) >= self.up_line:
+            # 无仓位的时候，如果上沿价格上涨，则需要更新交易参数
+            return True
+        elif data['direction'] == self.direction and position == 0 and self.direction == "sell" and float(data['up_line']) <= self.up_line:
+            # 无仓位的时候，如果上沿价格下跌，则需要更新交易参数
+            return True
+        else:
+            return False
 
     def update_trading_params(self, data):
-        # 当前如果处于运行状态，则无需更改交易参数
-        if data['direction'] == self.direction and self.running:
-            logger.info(f'{self.symbol} 交易方向未发生变化，无需更新交易参数')
-            return
+        # if not self.is_need_update_trading_params(data):
+        #     return
 
-        elif data['direction'] != self.direction:
-            self.running = True
+        # # 当前如果处于运行状态，则无需更改交易参数
+        # if data['direction'] == self.direction and self.running:
+        #     logger.info(f'{self.symbol} 交易方向未发生变化，无需更新交易参数')
+        #     return
+
+        # elif data['direction'] != self.direction or \
+        #     (data["direction"] == self.direction and float(data["up_line"]) != self.up_line):
+        #     self.running = True
+        if self.is_need_update_trading_params(data):
             try:
                 # 平仓
                 close_position(self.symbol)
@@ -468,21 +509,21 @@ class GridTrader:
                 # 获取当前仓位和持仓方向
                 position = get_position(self.symbol)
 
-                # 如果发现止损单和当前仓位不一致，则需要更新止损单
-                if position > 0 and self.stop_loss_order_id is None:
-                    # 创建止损单
-                    self.stop_loss_order_id = place_order(self.symbol, "sell" if self.direction == "buy" else "buy", position, self.down_line, "limit")
-                    if self.stop_loss_order_id:
-                        logger.info(f"{self.symbol}|止损单已经创建: {self.stop_loss_order_id}")
-                    else:
-                        logger.error(f"{self.symbol}|止损单创建失败")
-                elif self.stop_loss_order_id:
-                    # 检查止损单是否已经成交
-                    order_detail = query_order(self.symbol, self.stop_loss_order_id)
-                    if order_detail and order_detail['state'] == 'filled':
-                        # 止损单已经成交，说明该区间的逻辑结束了
-                        cancel_all_orders(self.symbol)
-                        logger.info(f"{self.symbol}|止损单已经成交，区间逻辑结束")
+                # # 如果发现止损单和当前仓位不一致，则需要更新止损单
+                # if position > 0 and self.stop_loss_order_id is None:
+                #     # 创建止损单
+                #     self.stop_loss_order_id = place_price_trigger_order(self.symbol, "sell" if self.direction == "buy" else "buy", position, self.down_line, "limit", rule=2 if self.direction == "buy" else 1)
+                #     if self.stop_loss_order_id:
+                #         logger.info(f"{self.symbol}|止损单已经创建: {self.stop_loss_order_id}")
+                #     else:
+                #         logger.error(f"{self.symbol}|止损单创建失败")
+                # elif self.stop_loss_order_id:
+                #     # 检查止损单是否已经成交
+                #     order_detail = query_order(self.symbol, self.stop_loss_order_id)
+                #     if order_detail and order_detail['state'] == 'filled':
+                #         # 止损单已经成交，说明该区间的逻辑结束了
+                #         cancel_all_orders(self.symbol)
+                #         logger.info(f"{self.symbol}|止损单已经成交，区间逻辑结束")
                     
                 # 获取当前所有挂单
                 pending_orders = get_pending_orders(self.symbol)
@@ -499,16 +540,16 @@ class GridTrader:
                     if entry['order_id'] and entry['order_id'] not in pending_order_map:
                         logger.info(f'{self.symbol} 入场单 {entry["order_id"]} 已成交')
                         order_detail = query_order(self.symbol, entry['order_id'])
-                        if order_detail and order_detail['state'] == 'filled':
+                        if order_detail and order_detail.status == 'finished':
                             # 清除掉之后，下一次进来如果发现当前的入场单都是live状态，那不需要再去更新出场单
                             self.entry_list.remove(entry)
                             logger.info(f'{self.symbol} 入场单 {entry["order_id"]} 已成交，移除入场单')
                         # 检测到有入场单成交且已经有持仓，更新出场单
-                        if position > 0 and order_detail and order_detail['state'] == 'filled':
+                        if position > 0 and order_detail and order_detail.status == 'finished':
                             # 取消所有现有的出场挂单
-                            exit_orders_to_cancel = [order['orderId'] for order in pending_orders if 
-                                                   (self.direction == "buy" and order['side'] == "sell") or
-                                                   (self.direction == "sell" and order['side'] == "buy")]
+                            exit_orders_to_cancel = [order.id for order in pending_orders if 
+                                                   (self.direction == "buy" and order.size < 0) or
+                                                   (self.direction == "sell" and order.size > 0)]
                             if exit_orders_to_cancel:
                                 batch_cancel_orders(self.symbol, exit_orders_to_cancel)
                             
@@ -530,16 +571,18 @@ class GridTrader:
                                 ret_list = batch_place_order(self.symbol, new_exit_orders)
                                 # TODO 加一下成功与失败的判断
                                 for i in range(len(ret_list)):
-                                    self.exit_list[i]['order_id'] = ret_list[i]['orderId']
+                                    self.exit_list[i]['order_id'] = str(ret_list[i].id)
+                                    pending_order_map[str(ret_list[i].id)] = ret_list[i]
+                                    
                                 # 刚挂完出场单，不可能马上成交，可以等待下一次监测判断
-                                continue
+                                logger.info(f'{self.symbol} 刚挂完出场单，不可能马上成交，可以等待下一次监测判断')
 
                 # 检查出场单状态
                 for exit_conf in self.exit_list:
                     if exit_conf['order_id'] and exit_conf['order_id'] not in pending_order_map:
                         logger.info(f'{self.symbol} 出场单 {exit_conf["order_id"]} 已成交')
                         order_detail = query_order(self.symbol, exit_conf['order_id'])
-                        if order_detail and order_detail['state'] == 'filled':
+                        if order_detail and order_detail.status == 'finished':
                             # 成交的单子就会被移除掉
                             self.exit_list.remove(exit_conf)
                             logger.info(f'{self.symbol} 出场单 {exit_conf["order_id"]} 已成交，移除出场单')
@@ -547,9 +590,9 @@ class GridTrader:
                             # 取消所有现有的入场挂单
                             entry_orders_to_cancel = []
                             if pending_orders:
-                                entry_orders_to_cancel = [order['orderId'] for order in pending_orders if 
-                                                        (self.direction == "buy" and order['side'] == "buy") or
-                                                        (self.direction == "sell" and order['side'] == "sell")]
+                                entry_orders_to_cancel = [order.id for order in pending_orders if 
+                                                        (self.direction == "buy" and order.size < 0) or
+                                                        (self.direction == "sell" and order.size > 0)]
                             if entry_orders_to_cancel:
                                 batch_cancel_orders(self.symbol, entry_orders_to_cancel)
                             
@@ -578,7 +621,7 @@ class GridTrader:
                                 ret_list = batch_place_order(self.symbol, new_entry_orders)
                                 # 更新入场单ID
                                 for i, ret in enumerate(ret_list):
-                                    self.entry_list[i]['order_id'] = ret['orderId']
+                                    self.entry_list[i]['order_id'] = ret.id
                                 logger.info(f'{self.symbol} 重新设置入场单成功: {json.dumps(new_entry_orders, ensure_ascii=False)}')
 
                 # 检测当前价格是否已经达到了移动止盈的触发点
@@ -645,7 +688,7 @@ class GridTrader:
 def handle_message():
     try:
         data = request.get_json()
-        symbol = data['symbol']
+        symbol = prefix_symbol(data['symbol'])
         logger.info(f'收到 {symbol} 的新交易参数请求: {json.dumps(data, ensure_ascii=False)}')
         
         if symbol not in trading_pairs:

@@ -1,24 +1,25 @@
-import bitget.bitget_api as baseApi
-import bitget.consts as bg_constants
+# !/usr/bin/env python
+# coding: utf-8
 
-from bitget.exceptions import BitgetAPIException
+from decimal import Decimal as D, ROUND_UP, getcontext
+
+from gate_api import ApiClient, Configuration, FuturesApi, FuturesOrder, Transfer, WalletApi
+from gate_api.exceptions import GateApiException
+
+from config import RunConfig
+
+SETTLE = "usdt"
 
 if __name__ == '__main__':
-    apiKey = "bg_0fcc6babcd593ec94288b99a7445e196"
-    secretKey = "8e715cf50188997531fa00c9e607f201a70e394b920e1986163e6e453475d10c"
-    passphrase = "robin3910"
-    baseApi = baseApi.BitgetApi(apiKey, secretKey, passphrase)
-
-
-    # Demo 获取仓位信息
-    # {'code': '00000', 'msg': 'success', 'requestTime': 1739621779055, 'data': [{'marginCoin': 'USDT', 'symbol': 'BTCUSDT', 'holdSide': 'long', 'openDelegateSize': '0.01', 'marginSize': '96.0616', 'available': '0.01', 'locked': '0', 'total': '0.01', 'leverage': '10', 'achievedProfits': '0', 'openPriceAvg': '96061.6', 'marginMode': 'crossed', 'posMode': 'one_way_mode', 'unrealizedPL': '14.338', 'liquidationPrice': '-9880613.7641839999', 'keepMarginRate': '0.004', 'markPrice': '97495.4', 'marginRatio': '0.000087489769', 'breakEvenPrice': '96208.214834900941', 'totalFee': '-0.31252946', 'deductedFee': '0.5763696', 'grant': '', 'assetMode': 'single', 'autoMargin': 'off', 'takeProfit': None, 'stopLoss': None, 'takeProfitId': None, 'stopLossId': None, 'cTime': '1739431888793', 'uTime': '1739621073343'}]} 
+    gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
+    futures_api = FuturesApi(ApiClient(gate_config))
+    settle = SETTLE
+    symbol = "BTC_USDT"
+    position_size = 0
     try:
-        params = {}
-        params["symbol"] = "BTCUSDT"
-        params["productType"] = "usdt-futures"
-        params["marginCoin"] = "USDT"
-        response = baseApi.get("/api/v2/mix/position/single-position", params)
-        print(response)
-    except BitgetAPIException as e:
-        print("error:" + e.message)
+        position = futures_api.get_position(SETTLE, symbol)
+        position_size = position.size
+        print(position_size)
+    except GateApiException as ex:
+        print(f'{symbol}|获取仓位失败，错误: {ex}')
 

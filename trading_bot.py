@@ -8,9 +8,7 @@ from datetime import datetime, timedelta
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-import bitget.bitget_api as baseApi
-import gate_api.constant as CONFIG
-from bitget.exceptions import BitgetAPIException
+import constant as CONFIG
 from decimal import Decimal as D, ROUND_UP, getcontext
 from gate_api import ApiClient, Configuration, FuturesApi, FuturesOrder, Transfer, WalletApi
 from gate_api.exceptions import GateApiException
@@ -36,7 +34,7 @@ futures_api = FuturesApi(ApiClient(gate_config))
 
 # 对币种信息预处理
 def prefix_symbol(s: str) -> str:
-    # BINANCE:BTCUSDT.P -> BTC-USDT-SWAP
+    # BINANCE:BTCUSDT.P -> BTC_USDT
     # 首先处理冒号，如果存在则取后面的部分
     if ':' in s:
         s = s.split(':')[1]
@@ -44,7 +42,10 @@ def prefix_symbol(s: str) -> str:
     # 检查字符串是否以".P"结尾并移除
     if s.endswith('.P'):
         s = s[:-2]
-    
+
+    # 将BTCUSDT转成BTC_USDT
+    s = s.replace('BTC', 'BTC_')
+
     return s
 
 def send_wx_notification(title, message):
@@ -102,10 +103,10 @@ def place_order(symbol, side, qty, price, order_type="limit"):
     order = FuturesOrder(contract=symbol, size=qty, price=price, tif=tif)
     try:
         order_response = futures_api.create_futures_order(SETTLE, order)
-        print("order %s created with status: %s", order_response.id, order_response.status)
-        return order_response.id
+        logger.info(f"order {order_response.id} created with status: {order_response.status}")
+        return str(order_response.id)
     except GateApiException as ex:
-        print("error encountered creating futures order: %s", ex)
+        logger.error(f"error encountered creating futures order: {ex}")
         return
 
 
@@ -119,8 +120,8 @@ def query_order(symbol, order_id):
         return None
 
 def close_position(symbol):
-    """平仓"""
-    order = FuturesOrder(contract=symbol, close=True)
+    """市价平仓"""
+    order = FuturesOrder(contract=symbol, size="0", close="true", price="0", tif="ioc")
     try:
         order_response = futures_api.create_futures_order(SETTLE, order)
         return order_response.id
@@ -130,157 +131,129 @@ def close_position(symbol):
 
 def get_position(symbol):
     """获取仓位"""
+    position_size = 0
     try:
-        params = {}
-        params["symbol"] = symbol
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        params["marginCoin"] = "USDT"
-        response = baseApi.get("/api/v2/mix/position/single-position", params)
-        if response['code'] == CONFIG.SUCCESS and len(response['data']) > 0:
-            return float(response['data'][0]['total']), response['data'][0]['holdSide']
-        else:
-            logger.error(f'{symbol}|无仓位: {response}')
-            return 0, None
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|获取仓位失败，错误: {e}')
+        position = futures_api.get_position(SETTLE, symbol)
+        position_size = position.size
+        return position_size
+    except GateApiException as ex:
+        logger.error(f'{symbol}|获取仓位失败，错误: {ex}')
         return 0
 
 def batch_place_order(symbol, order_list):
     """批量下单"""
     try:
-        params = {}
-        params["symbol"] = symbol
-        params["marginCoin"] = "USDT"
-        params["marginMode"] = "crossed"
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        params["orderList"] = order_list
-        response = baseApi.post("/api/v2/mix/order/batch-place-order", params)
-        if response['code'] == CONFIG.SUCCESS:
-            return response['data']['successList']
-        else:
-            logger.error(f'{symbol}|批量下单失败，错误: {response}')
-            return None
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|批量下单失败，错误: {e}')
+        place_order_list = []
+        for order in order_list:
+            qty = order['size']
+            tif = "gtc"
+            price = order['price']
+            # 带price就是委托单，不带price是市价单
+            if order['orderType'] == "limit":
+                tif = "gtc"
+            else:
+                tif = "ioc"
+                price = 0
+            
+            if order['side'] == "sell":
+                qty = -qty
+                
+            order = FuturesOrder(contract=symbol, size=qty, price=price, tif=tif)
+            place_order_list.append(order)
+        order_response = futures_api.create_batch_futures_order(SETTLE, place_order_list)
+        return order_response
+    except GateApiException as ex:
+        logger.error(f'{symbol}|批量下单失败，错误: {ex}')
         return None
 
 def get_pending_orders(symbol):
     """获取挂单信息"""
     try:
-        params = {}
-        params["symbol"] = symbol
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        response = baseApi.get("/api/v2/mix/order/orders-pending", params)
-        if response['code'] == CONFIG.SUCCESS:
-            return response['data']["entrustedList"]
-        else:
-            logger.error(f'{symbol}|获取挂单信息失败，错误: {response}')
-            return None
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|获取挂单信息失败，错误: {e}')
+        order_list = futures_api.list_futures_orders(SETTLE, status="open", contract=symbol)
+        return order_list
+    except GateApiException as ex:
+        logger.error(f'{symbol}|获取挂单信息失败，错误: {ex}')
         return None
 
 def cancel_order(symbol, order_id):
     try:
-        params = {}
-        params['symbol'] = symbol
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        params['orderId'] = order_id
-        response = baseApi.post("/api/v2/mix/order/cancel-order", params)
-        return response
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|取消挂单失败，错误: {e}')
-        return None
+        order_response = futures_api.cancel_futures_order(SETTLE, order_id)
+        logger.info(f'{symbol}|取消挂单成功: {order_response}')
+    except GateApiException as ex:
+        logger.error(f'{symbol}|取消挂单失败，错误: {ex}')
 
 def cancel_all_orders(symbol):
     try:
-        params = {}
-        params['symbol'] = symbol
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        response = baseApi.post("/api/v2/mix/order/cancel-all-orders", params)
-        if response['code'] == CONFIG.SUCCESS:
-            logger.info(f'{symbol}|撤销所有挂单成功')
-            return None
+        pending_orders = futures_api.list_futures_orders(SETTLE, status="open", contract=symbol)
+        if pending_orders:
+            order_id_list = [str(order.id) for order in pending_orders]
+            order_response = futures_api.cancel_batch_future_orders(SETTLE, order_id_list)
+            logger.info(f'{symbol}|取消挂单成功: {order_response}')
         else:
-            logger.error(f'{symbol}|撤销所有挂单失败，错误: {response}')
-            return None
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|撤销所有挂单失败，错误: {e}')
-        return None
+            logger.info(f'{symbol}|没有挂单')
+    except GateApiException as ex:
+        logger.error(f'{symbol}|取消挂单失败，错误: {ex}')
 
-def set_position_mode(pos_mode):
+def set_position_mode(is_dual_mode):
     """设置持仓模式"""
+    # is_dual_mode 为True表示双向持仓，为False表示单向持仓
     try:
-        params = {}
-        params["posMode"] = pos_mode
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        response = baseApi.post("/api/v2/mix/account/set-position-mode", params)
-        if response['code'] == CONFIG.SUCCESS:
-            logger.info(f'设置持仓模式成功')
-            return None
-        else:
-            logger.error(f'设置持仓模式失败，错误: {response}')
-            return None
-    except BitgetAPIException as e:
-        logger.error(f'设置持仓模式失败，错误: {e}')
+        dual_mode_response = futures_api.set_dual_mode(SETTLE, is_dual_mode)
+        return dual_mode_response
+    except GateApiException as ex:
+        logger.error(f'设置持仓模式失败，错误: {ex}')
         return None
 
-def batch_cancel_orders(symbol, order_id_list):
+def batch_cancel_orders(order_id_list):
     """批量撤销挂单"""
     try:
-        params = {}
-        params["symbol"] = symbol
-        params["marginCoin"] = "USDT"
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        params["orderIdList"] = order_id_list
-        response = baseApi.post("/api/v2/mix/order/batch-cancel-order", params)
-        if response['code'] == CONFIG.SUCCESS:
-            return response['data']['successList']
-        else:
-            logger.error(f'{symbol}|批量撤销挂单失败，错误: {response}')
-            return None
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|批量撤销挂单失败，错误: {e}')
+        order_response = futures_api.cancel_batch_future_orders(SETTLE, order_id_list)
+        return order_response
+    except GateApiException as ex:
+        logger.error(f'批量撤销挂单失败，错误: {ex}')
         return None
 
+def get_single_contract(symbol):
+    """获取单个合约信息"""
+    try:
+        order_response = futures_api.get_futures_contract(SETTLE, symbol)
+        return order_response
+    except GateApiException as ex:
+        logger.error(f'{symbol}|获取单个合约信息失败，错误: {ex}')
+        return None
+    
 def get_mark_price(symbol):
     """获取标记价格"""
     try:
-        params = {}
-        params["symbol"] = symbol
-        params["productType"] = CONFIG.PRODUCT_TYPE
-        response = baseApi.get("/api/v2/mix/market/ticker", params)
-        if response['code'] == CONFIG.SUCCESS:
-            return response['data'][0]['markPrice']
-        else:
-            logger.error(f'{symbol}|获取标记价格失败，错误: {response}')
-            return None
-    except BitgetAPIException as e:
-        logger.error(f'{symbol}|获取标记价格失败，错误: {e}')
+        order_response = futures_api.get_futures_contract(SETTLE, symbol)
+        return float(order_response.mark_price)
+    except GateApiException as ex:
+        logger.error(f'{symbol}|获取标记价格失败，错误: {ex}')
         return None
 
 # 设置持仓模式
-set_position_mode("one_way_mode")
+set_position_mode(False)
+symbol_tick_size = {}
 
 # 获取币种的精度
 try:
-    params = {}
-    params["productType"] = "USDT-FUTURES"
-    exchange_info = baseApi.get("/api/v2/mix/market/contracts", params)
-    symbol_tick_size = {}
-    for item in exchange_info['data']:
-        symbol_tick_size[item['symbol']] = {
-            'tick_size': int(item["pricePlace"]),
-            'min_qty': int(item["volumePlace"]),
+    exchange_info = futures_api.list_futures_contracts(SETTLE)
+    for item in exchange_info:
+        symbol_tick_size[item.name] = {
+            'tick_size': len(str(float(item.order_price_round)).split('.')[-1].rstrip('0')),
+            'min_qty': int(item.order_size_min),
+            "qty_to_contract": float(item.quanto_multiplier)
         }
     logger.info(f'获取币种精度成功')
-except BitgetAPIException as error:
-    send_wx_notification(f'获取币种精度失败', f'获取币种精度失败，错误: {error}')
-    logger.error(
-        "Found error. status: {}, error code: {}, error message: {}".format(
-            error.status_code, error.error_code, error.error_message
-        )
-    )
+except GateApiException as ex:
+    logger.error(f'获取币种精度失败，错误: {ex}')
+
+def amountConvertToContract(_symbol, _amount):
+    """将数量转换为张数"""
+    global symbol_tick_size
+    qty_to_contract = symbol_tick_size[_symbol]['qty_to_contract']
+    return int(_amount / qty_to_contract)
+
 
 # 创建全局字典来存储不同币种的交易信息
 trading_pairs = {}
@@ -345,6 +318,15 @@ class GridTrader:
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
 
+                if symbol_tick_size[self.symbol] is None:
+                    logger.error(f'{self.symbol} 精度不存在|重新获取精度')
+                    contract_info = get_single_contract(self.symbol)
+                    symbol_tick_size[self.symbol] = {
+                        'tick_size': len(str(float(contract_info.order_price_round)).split('.')[-1].rstrip('0')),
+                        'min_qty': int(contract_info.order_size_min),
+                        "qty_to_contract": float(contract_info.quanto_multiplier)
+                    }
+
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
                     #  ^
@@ -363,7 +345,7 @@ class GridTrader:
                             entry_price = round(self.down_line + float(price_ratio) * 0.01 * self.interval, symbol_tick_size[self.symbol]['tick_size'])
                             entry_percent = float(percent) * 0.01
                             entry_zone_usdt = self.zone_usdt * entry_percent
-                            entry_qty = round(entry_zone_usdt / entry_price, symbol_tick_size[self.symbol]['min_qty'])
+                            entry_qty = amountConvertToContract(self.symbol, entry_zone_usdt/entry_price)
                             self.entry_list.append({
                                 'entry_price': entry_price, # 入场价格
                                 'percent': entry_percent,  # 投入资金百分比
@@ -384,6 +366,7 @@ class GridTrader:
                             self.exit_list.append({
                                 'exit_price': exit_price, # 退出价格
                                 'percent': exit_percent,  # 离场资金百分比
+                                'order_id': None # 订单ID
                             })
                         logger.info(f'出场配置解析结果: {json.dumps(self.exit_list, ensure_ascii=False)}')
 
@@ -398,7 +381,7 @@ class GridTrader:
                         })
                     ret_list = batch_place_order(self.symbol, order_list)
                     for i in range(len(ret_list)):
-                        self.entry_list[i]['order_id'] = ret_list[i]['orderId']
+                        self.entry_list[i]['order_id'] = str(ret_list[i].id)
 
                     # 还需要不断监控当前的成交情况，用一个map来记录一下
                     # 如果成交了，更新map的信息
@@ -483,7 +466,7 @@ class GridTrader:
         while True:
             try:
                 # 获取当前仓位和持仓方向
-                position, hold_side = get_position(self.symbol)
+                position = get_position(self.symbol)
 
                 # 如果发现止损单和当前仓位不一致，则需要更新止损单
                 if position > 0 and self.stop_loss_order_id is None:
@@ -508,7 +491,7 @@ class GridTrader:
                 pending_order_map = {}
                 if pending_orders:
                     for order in pending_orders:
-                        pending_order_map[order['orderId']] = order
+                        pending_order_map[str(order.id)] = order
 
                 # 检查入场单状态
                 for entry in self.entry_list:

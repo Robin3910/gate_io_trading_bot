@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 环境变量文件
+.env
+
+# 日志文件
+*.log
+
+# 其他
+*.sqlite3
+*.db

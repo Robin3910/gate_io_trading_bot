@@ -16,14 +16,12 @@ if __name__ == '__main__':
     futures_api = FuturesApi(ApiClient(gate_config))
     settle = SETTLE
     symbol = "BTC_USDT"
-
+    order_list = [
+        FuturesOrder(contract=symbol, size=1, price=92000, tif="gtc"),
+        FuturesOrder(contract=symbol, size=1, price=93000, tif="gtc"),
+    ]
     try:
-        pending_orders = futures_api.list_futures_orders(SETTLE, status="open", contract=symbol)
-        if pending_orders:
-            order_id_list = [str(order.id) for order in pending_orders]
-            order_response = futures_api.cancel_batch_future_orders(SETTLE, order_id_list)
-            print(order_response)
-        else:
-            print("没有挂单")
+        order_response = futures_api.create_batch_futures_order(SETTLE, order_list)
+        print(order_response)
     except GateApiException as ex:
-        print(f'{symbol}|取消挂单失败，错误: {ex}')
+        print("error encountered creating futures order: %s", ex)

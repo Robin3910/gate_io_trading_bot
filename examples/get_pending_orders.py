@@ -1,21 +1,20 @@
-import bitget.bitget_api as baseApi
-import bitget.consts as bg_constants
+# !/usr/bin/env python
+# coding: utf-8
 
-from bitget.exceptions import BitgetAPIException
+from decimal import Decimal as D, ROUND_UP, getcontext
+
+from gate_api import ApiClient, Configuration, FuturesApi, FuturesOrder, Transfer, WalletApi
+from gate_api.exceptions import GateApiException
+
+SETTLE = "usdt"
 
 if __name__ == '__main__':
-    apiKey = "bg_0fcc6babcd593ec94288b99a7445e196"
-    secretKey = "8e715cf50188997531fa00c9e607f201a70e394b920e1986163e6e453475d10c"
-    passphrase = "robin3910"
-    baseApi = baseApi.BitgetApi(apiKey, secretKey, passphrase)
-
-
-    # Demo 批量获取挂单信息
-    # api/v2/mix/order/orders-pending
+    gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
+    futures_api = FuturesApi(ApiClient(gate_config))
+    settle = SETTLE
+    symbol = "BTC_USDT"
     try:
-        params = {}
-        params["productType"] = "usdt-futures"
-        response = baseApi.get("/api/v2/mix/order/orders-pending", params)
-        print(response)
-    except BitgetAPIException as e:
-        print("error:" + e.message)
+        order_response = futures_api.list_futures_orders(SETTLE, status="open", contract=symbol)
+        print(order_response)
+    except GateApiException as ex:
+        print("error encountered creating futures order: %s", ex)

@@ -11,6 +11,7 @@ from config import RunConfig
 SETTLE = "usdt"
 
 def place_order(symbol, side, qty, price, order_type="limit"):
+    """下单"""
     if order_type == "limit":
         tif = "gtc"
         if price == 0:
@@ -37,10 +38,9 @@ if __name__ == '__main__':
     futures_api = FuturesApi(ApiClient(gate_config))
     settle = SETTLE
     symbol = "BTC_USDT"
-    order = FuturesOrder(contract=symbol, size="0", close="true", price="0", tif="ioc")
-
+    order_id = "1234567890"
     try:
-        order_response = futures_api.create_futures_order(SETTLE, order)
+        order_response = futures_api.get_futures_order(SETTLE, order_id)
         print(order_response)
     except GateApiException as ex:
         print("error encountered creating futures order: %s", ex)

@@ -51,7 +51,7 @@ def prefix_symbol(s: str) -> str:
         s = s[:-2]
 
     # 将BTCUSDT转成BTC_USDT
-    s = s.replace('BTC', 'BTC_')
+    s = s.replace('USDT', '_USDT')
 
     return s
 
@@ -157,9 +157,12 @@ def close_position(symbol):
         order_response = futures_api.create_futures_order(SETTLE, order)
         return order_response.id
     except GateApiException as ex:
-        logger.error(f'{symbol}|平仓失败，错误: {ex}')
-        send_wx_notification(f"{symbol}|平仓失败", f"平仓失败: {ex}")
-        return None
+        if ex.label == "POSITION_EMPTY":
+            return None
+        else:
+            logger.error(f'{symbol}|平仓失败，错误: {ex}')
+            send_wx_notification(f"{symbol}|平仓失败", f"平仓失败: {ex}")
+            return None
 
 def get_position(symbol):
     """获取仓位"""
@@ -349,6 +352,14 @@ class GridTrader:
                 # 取消所有挂单
                 cancel_all_orders(self.symbol)
 
+                if symbol_tick_size[self.symbol] is None:
+                    logger.error(f'{self.symbol} 精度不存在|重新获取精度')
+                    contract_info = get_single_contract(self.symbol)
+                    symbol_tick_size[self.symbol] = {
+                        'tick_size': len(str(float(contract_info.order_price_round)).split('.')[-1].rstrip('0')),
+                        'min_qty': int(contract_info.order_size_min),
+                        "qty_to_contract": float(contract_info.quanto_multiplier)
+                    }
                 # 更新新的方向的参数
                 logger.info(f'更新交易参数: {json.dumps(data, ensure_ascii=False)}')
                 self.total_usdt = float(data['total_usdt'])
@@ -360,8 +371,8 @@ class GridTrader:
                 self.pos_for_trail = float(data['pos_for_trail'])
                 self.trail_active_percent = float(data['trail_active_price']) # 移动止盈的触发percent
                 self.trail_callback = float(data['trail_callback'])
-                self.up_line = float(data['up_line'])
-                self.down_line = float(data['down_line'])
+                self.up_line = round(float(data['up_line']), symbol_tick_size[self.symbol]['tick_size'])
+                self.down_line = round(float(data['down_line']), symbol_tick_size[self.symbol]['tick_size'])
                 self.zone_usdt = self.total_usdt * self.every_zone_usdt # 预期一个区间要投入的金额
                 if self.current_loss_decrease > 0:
                     self.zone_usdt = self.zone_usdt * (1 - self.current_loss_decrease)
@@ -369,14 +380,7 @@ class GridTrader:
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
 
-                if symbol_tick_size[self.symbol] is None:
-                    logger.error(f'{self.symbol} 精度不存在|重新获取精度')
-                    contract_info = get_single_contract(self.symbol)
-                    symbol_tick_size[self.symbol] = {
-                        'tick_size': len(str(float(contract_info.order_price_round)).split('.')[-1].rstrip('0')),
-                        'min_qty': int(contract_info.order_size_min),
-                        "qty_to_contract": float(contract_info.quanto_multiplier)
-                    }
+
 
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
@@ -384,8 +388,8 @@ class GridTrader:
                     #  |
                     #  |
                     # ------ 下沿 down_line 90000
-                    self.interval = self.up_line - self.down_line
-                    self.trail_active_price = self.down_line + self.interval * self.trail_active_percent
+                    self.interval = round(self.up_line - self.down_line, symbol_tick_size[self.symbol]['tick_size'])
+                    self.trail_active_price = round(self.down_line + self.interval * self.trail_active_percent, symbol_tick_size[self.symbol]['tick_size'])
                     # 解析入场配置
                     self.entry_list = []
                     if self.entry_config:
@@ -450,8 +454,8 @@ class GridTrader:
                     #  |
                     #  v
                     # ------ 下沿 up_line 90000
-                    self.interval = self.down_line - self.up_line
-                    self.trail_active_price = self.down_line - self.interval * self.trail_active_percent
+                    self.interval = round(self.down_line - self.up_line, symbol_tick_size[self.symbol]['tick_size'])
+                    self.trail_active_price = round(self.down_line - self.interval * self.trail_active_percent, symbol_tick_size[self.symbol]['tick_size'])
                     # 解析入场配置
                     self.entry_list = []
                     if self.entry_config:
@@ -463,7 +467,7 @@ class GridTrader:
                             entry_price = round(self.down_line - (1 - float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['tick_size'])
                             entry_percent = float(percent) * 0.01
                             entry_zone_usdt = self.zone_usdt * entry_percent
-                            entry_qty = round(entry_zone_usdt / entry_price, symbol_tick_size[self.symbol]['min_qty'])
+                            entry_qty = amountConvertToContract(self.symbol, entry_zone_usdt/entry_price)
                             self.entry_list.append({
                                 'entry_price': entry_price, # 入场价格
                                 'percent': entry_percent,  # 投入资金百分比
@@ -479,7 +483,7 @@ class GridTrader:
                         exit_configs = self.exit_config.split('|')
                         for config in exit_configs:
                             price_ratio, percent = config.split('_')
-                            exit_price = round(self.down_line - (1 - float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['tick_size'])
+                            exit_price = round(self.down_line - (float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['tick_size'])
                             exit_percent = float(percent) * 0.01
                             self.exit_list.append({
                                 'exit_price': exit_price, # 退出价格
@@ -499,7 +503,7 @@ class GridTrader:
                         })
                     ret_list = batch_place_order(self.symbol, order_list)
                     for i in range(len(ret_list)):
-                        self.entry_list[i]['order_id'] = ret_list[i]['orderId']
+                        self.entry_list[i]['order_id'] = str(ret_list[i].id)
 
                 # 开启一个新的线程来监控成交情况
                 if self.monitor_thread is None:

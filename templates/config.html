@@ -173,7 +173,7 @@
                         <th>方向</th>
                         <th>持仓数量</th>
                         <th>区间投入(USDT)</th>
-                        <th>亏损递减</th>
+                        <th>当前亏损递减</th>
                         <th>上轨</th>
                         <th>下轨</th>
                         <th>当前价格</th>
@@ -268,7 +268,7 @@
         function formatOrderList(orders) {
             if (!orders || orders.length === 0) return '无订单';
             
-            return orders.map(order => {
+            return orders.map((order, index) => {
                 let orderInfo = '';
                 if (order.entry_price) {
                     orderInfo = `价格:${order.entry_price}, 数量:${order.qty}`;
@@ -281,8 +281,9 @@
                         orderInfo += `, ID:${order.order_id}`;
                     }
                 }
-                return orderInfo;
-            }).join('<br>');
+                // 在除了最后一个订单外的所有订单后添加分割线
+                return index < orders.length - 1 ? orderInfo + '<hr style="margin: 5px 0; border-top: 1px solid #ddd;">' : orderInfo;
+            }).join('');
         }
 
         function updateStrategyStatus(isPaused) {

@@ -352,7 +352,7 @@ class GridTrader:
                 # 更新新的方向的参数
                 logger.info(f'更新交易参数: {json.dumps(data, ensure_ascii=False)}')
                 self.total_usdt = float(data['total_usdt'])
-                self.every_zone_usdt = float(data['every_zone_usdt'])
+                self.every_zone_usdt = float(data['every_zone_usdt']) # 百分数
                 self.loss_decrease = float(data['loss_decrease'])
                 self.direction = data['direction']
                 self.entry_config = data['entry_config']
@@ -363,6 +363,8 @@ class GridTrader:
                 self.up_line = float(data['up_line'])
                 self.down_line = float(data['down_line'])
                 self.zone_usdt = self.total_usdt * self.every_zone_usdt # 预期一个区间要投入的金额
+                if self.current_loss_decrease > 0:
+                    self.zone_usdt = self.zone_usdt * (1 - self.current_loss_decrease)
                 self.trail_high_price = 0 # 移动止盈的最高价格
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID

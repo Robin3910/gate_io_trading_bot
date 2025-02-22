@@ -212,6 +212,7 @@ def get_pending_orders(symbol):
         return None
 
 def cancel_order(symbol, order_id):
+    """取消指定ID的挂单"""
     try:
         order_response = futures_api.cancel_futures_order(SETTLE, order_id)
         logger.info(f'{symbol}|取消挂单成功: {order_response}')
@@ -220,6 +221,7 @@ def cancel_order(symbol, order_id):
         send_wx_notification(f"{symbol}|取消挂单失败", f"取消挂单失败: {ex}")
 
 def cancel_all_orders(symbol):
+    """取消该品种所有的挂单"""
     try:
         pending_orders = futures_api.list_futures_orders(SETTLE, status="open", contract=symbol)
         if pending_orders:
@@ -242,13 +244,13 @@ def set_position_mode(is_dual_mode):
         logger.error(f'设置持仓模式失败，错误: {ex}')
         return None
 
-def batch_cancel_orders(order_id_list):
-    """批量撤销挂单"""
+def batch_cancel_orders(symbol, order_id_list):
+    """批量撤销指定ID的挂单"""
     try:
         order_response = futures_api.cancel_batch_future_orders(SETTLE, order_id_list)
         return order_response
     except GateApiException as ex:
-        logger.error(f'批量撤销挂单失败，错误: {ex}')
+        logger.error(f'{symbol}|批量撤销挂单失败，错误: {ex}')
         send_wx_notification(f"{symbol}|批量撤销挂单失败", f"批量撤销挂单失败: {ex}")
         return None
 
@@ -280,7 +282,7 @@ try:
     for item in exchange_info:
         symbol_tick_size[item.name] = {
             'tick_size': len(str(float(item.order_price_round)).split('.')[-1].rstrip('0')),
-            'min_qty': int(item.order_size_min),
+            'min_qty': len(str(float(item.order_size_min)).split('.')[-1].rstrip('0')),
             "qty_to_contract": float(item.quanto_multiplier)
         }
     logger.info(f'获取币种精度成功')
@@ -357,7 +359,7 @@ class GridTrader:
                     contract_info = get_single_contract(self.symbol)
                     symbol_tick_size[self.symbol] = {
                         'tick_size': len(str(float(contract_info.order_price_round)).split('.')[-1].rstrip('0')),
-                        'min_qty': int(contract_info.order_size_min),
+                        'min_qty': len(str(float(contract_info.order_size_min)).split('.')[-1].rstrip('0')),
                         "qty_to_contract": float(contract_info.quanto_multiplier)
                     }
                 # 更新新的方向的参数
@@ -437,15 +439,6 @@ class GridTrader:
                     ret_list = batch_place_order(self.symbol, order_list)
                     for i in range(len(ret_list)):
                         self.entry_list[i]['order_id'] = str(ret_list[i].id)
-
-                    # 还需要不断监控当前的成交情况，用一个map来记录一下
-                    # 如果成交了，更新map的信息
-                    # 如果有仓位离场了，则价格再次下跌的时候要补齐仓位
-                    # 每次成交了一个仓位，就需要更新一下未来的离场限价单，因为持仓更新，未来需要离场的仓位变大了
-
-
-                    # 存在一个问题：离场了一部分仓位，价格下跌后要补仓多少呢
-                    # 肯定是先补齐当前价格的仓位，如果当前价格的仓位已经满足了，那就无需再补了
 
                 elif self.direction == "sell":
                     # 做空的时候，因为预期是要往下走的，所以down_line是区间上沿的价格, up_line是区间下沿的价格
@@ -529,103 +522,102 @@ class GridTrader:
                 # 获取当前所有挂单
                 pending_orders = get_pending_orders(self.symbol)
                 
-                # 创建挂单映射，用于快速查找
-                pending_order_map = {}
+                # 检查入场单状态
+                # 无论有无仓位，都需要检查入场单所有的仓位以及当前持仓加起来是否等于预期要投入的值
+                # 如果不足，则需要补单
+                # 如果相等，则无需额外操作
+                
+                # 计算所有入场单、出场单的总数量
+                total_entry_size = 0
+                total_exit_size = 0
+                entry_orders = []
+                exit_orders = []
                 if pending_orders:
                     for order in pending_orders:
-                        pending_order_map[str(order.id)] = order
+                        # 检查是否是当前symbol的订单
+                        if order.contract == self.symbol:
+                            # 如果是做多，只统计买单;如果是做空，只统计卖单
+                            if (self.direction == "buy" and float(order.size) > 0) or \
+                               (self.direction == "sell" and float(order.size) < 0):
+                                total_entry_size += abs(float(order.size))
+                                entry_orders.append(str(order.id))
+                            else:
+                                total_exit_size += abs(float(order.size))
+                                exit_orders.append(str(order.id))
+                logger.info(f'{self.symbol} 当前入场挂单总数量: {total_entry_size}')
 
-                # 检查入场单状态
+                # 计算预期需要入场的总数量
+                expected_entry_size = 0
                 for entry in self.entry_list:
-                    # 如果入场单ID存在但在当前挂单中找不到，说明可能已成交
-                    if entry['order_id'] and entry['order_id'] not in pending_order_map:
-                        logger.info(f'{self.symbol} 入场单 {entry["order_id"]} 已成交')
-                        order_detail = query_order(self.symbol, entry['order_id'])
-                        if order_detail and order_detail.status == 'finished':
-                            # 清除掉之后，下一次进来如果发现当前的入场单都是live状态，那不需要再去更新出场单
-                            self.entry_list.remove(entry)
-                            logger.info(f'{self.symbol} 入场单 {entry["order_id"]} 已成交，移除入场单')
-                        # 检测到有入场单成交且已经有持仓，更新出场单
-                        if position > 0 and order_detail and order_detail.status == 'finished':
-                            # 取消所有现有的出场挂单
-                            exit_orders_to_cancel = [order.id for order in pending_orders if 
-                                                   (self.direction == "buy" and order.size < 0) or
-                                                   (self.direction == "sell" and order.size > 0)]
-                            if exit_orders_to_cancel:
-                                batch_cancel_orders(self.symbol, exit_orders_to_cancel)
-                            
+                    expected_entry_size += entry['qty']
+                logger.info(f'{self.symbol} 预期入场总数量: {expected_entry_size}')
+
+                # 需要补入场单
+                if total_entry_size + self.position < expected_entry_size:
+                    # 取消所有现有的入场挂单
+                    if entry_orders:
+                        batch_cancel_orders(self.symbol, entry_orders)
+                    
+                    # 重新计算并设置入场单
+                    new_entry_orders = []
+                    remaining_position = position  # 当前持仓量
+                    
+                    for entry in self.entry_list:  # 直接遍历原始列表
+                        if remaining_position >= entry['qty']:
+                            # 如果剩余持仓大于等于该入场点应有的持仓量，不需要在此价位补单
+                            remaining_position -= entry['qty']
+                        else:
+                            # 需要补单的数量 = 应有持仓量 - 剩余持仓量
+                            need_qty = entry['qty'] - remaining_position
+                            if need_qty > 0:
+                                new_entry_orders.append({
+                                    "side": self.direction,
+                                    "price": entry['entry_price'],
+                                    "size": round(need_qty, symbol_tick_size[self.symbol]['min_qty']),
+                                    "orderType": "limit"
+                                })
+                            remaining_position = 0
+                    
+                    # 批量下新的入场单
+                    if new_entry_orders:
+                        ret_list = batch_place_order(self.symbol, new_entry_orders)
+                        # 更新入场单ID
+                        for i, ret in enumerate(ret_list):
+                            self.entry_list[i]['order_id'] = ret.id
+                        logger.info(f'{self.symbol} 重新设置入场单成功: {json.dumps(new_entry_orders, ensure_ascii=False)}')
+               
+                # 有仓位，没有出场单，就得把出场单补上，如果有入场单，则无需处理
+                # 先检查已有仓位和入场单的挂单是否匹配
+                # 如果匹配则无需处理
+                if self.position > 0:
+                    # 检查出场单是否足量
+                    if total_exit_size == round(self.position * (1 - self.pos_for_trail), symbol_tick_size[self.symbol]['min_qty']):
+                        pass
+                    else:
+                        # 需要补单
+                        # 取消所有现有的入场挂单
+                        if exit_orders:
+                            batch_cancel_orders(self.symbol, exit_orders)
                             # 创建新的出场订单
-                            new_exit_orders = []
-                            for exit_conf in self.exit_list:
-                                # 用分批止盈的仓位来设计出场单
-                                # 会预留一部分仓位来做移动止盈
-                                exit_qty = round(position * (1 - self.pos_for_trail) * exit_conf['percent'], symbol_tick_size[self.symbol]['min_qty'])
-                                if exit_qty > 0:
-                                    new_exit_orders.append({
-                                        "side": "sell" if self.direction == "buy" else "buy",
-                                        "price": exit_conf['exit_price'],
-                                        "size": exit_qty,
-                                        "orderType": "limit"
-                                    })
-                            
-                            if new_exit_orders:
-                                ret_list = batch_place_order(self.symbol, new_exit_orders)
-                                # TODO 加一下成功与失败的判断
-                                for i in range(len(ret_list)):
-                                    self.exit_list[i]['order_id'] = str(ret_list[i].id)
-                                    pending_order_map[str(ret_list[i].id)] = ret_list[i]
-                                    
-                                # 刚挂完出场单，不可能马上成交，可以等待下一次监测判断
-                                logger.info(f'{self.symbol} 刚挂完出场单，不可能马上成交，可以等待下一次监测判断')
+                        new_exit_orders = []
+                        for exit_conf in self.exit_list:
+                            # 用分批止盈的仓位来设计出场单
+                            # 会预留一部分仓位来做移动止盈
+                            exit_qty = round(self.position * (1 - self.pos_for_trail) * exit_conf['percent'], symbol_tick_size[self.symbol]['min_qty'])
+                            if exit_qty > 0:
+                                new_exit_orders.append({
+                                    "side": "sell" if self.direction == "buy" else "buy",
+                                    "price": exit_conf['exit_price'],
+                                    "size": round(exit_qty, symbol_tick_size[self.symbol]['min_qty']),
+                                    "orderType": "limit"
+                                })
+                        
+                        if new_exit_orders:
+                            ret_list = batch_place_order(self.symbol, new_exit_orders)
+                            for i in range(len(ret_list)):
+                                self.exit_list[i]['order_id'] = str(ret_list[i].id)
 
-                # 检查出场单状态
-                for exit_conf in self.exit_list:
-                    if exit_conf['order_id'] and exit_conf['order_id'] not in pending_order_map:
-                        logger.info(f'{self.symbol} 出场单 {exit_conf["order_id"]} 已成交')
-                        order_detail = query_order(self.symbol, exit_conf['order_id'])
-                        if order_detail and order_detail.status == 'finished':
-                            # 成交的单子就会被移除掉
-                            self.exit_list.remove(exit_conf)
-                            logger.info(f'{self.symbol} 出场单 {exit_conf["order_id"]} 已成交，移除出场单')
-                            
-                            # 取消所有现有的入场挂单
-                            entry_orders_to_cancel = []
-                            if pending_orders:
-                                entry_orders_to_cancel = [order.id for order in pending_orders if 
-                                                        (self.direction == "buy" and order.size < 0) or
-                                                        (self.direction == "sell" and order.size > 0)]
-                            if entry_orders_to_cancel:
-                                batch_cancel_orders(self.symbol, entry_orders_to_cancel)
-                            
-                            # 重新计算并设置入场单
-                            new_entry_orders = []
-                            remaining_position = position  # 当前持仓量
-                            
-                            for entry in self.entry_list:  # 直接遍历原始列表
-                                if remaining_position >= entry['qty']:
-                                    # 如果剩余持仓大于等于该入场点应有的持仓量，不需要在此价位补单
-                                    remaining_position -= entry['qty']
-                                else:
-                                    # 需要补单的数量 = 应有持仓量 - 剩余持仓量
-                                    need_qty = entry['qty'] - remaining_position
-                                    if need_qty > 0:
-                                        new_entry_orders.append({
-                                            "side": self.direction,
-                                            "price": entry['entry_price'],
-                                            "size": round(need_qty, symbol_tick_size[self.symbol]['min_qty']),
-                                            "orderType": "limit"
-                                        })
-                                    remaining_position = 0
-                            
-                            # 批量下新的入场单
-                            if new_entry_orders:
-                                ret_list = batch_place_order(self.symbol, new_entry_orders)
-                                # 更新入场单ID
-                                for i, ret in enumerate(ret_list):
-                                    self.entry_list[i]['order_id'] = ret.id
-                                logger.info(f'{self.symbol} 重新设置入场单成功: {json.dumps(new_entry_orders, ensure_ascii=False)}')
-
-                # 检测当前价格是否已经达到了移动止盈的触发点
+                # 检测当前价格是否已经达到了移动止盈的触发点以及止损点
                 mark_price = get_mark_price(self.symbol)
                 if mark_price:
                     mark_price = float(mark_price)

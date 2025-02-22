@@ -591,7 +591,8 @@ class GridTrader:
                 # 如果匹配则无需处理
                 if self.position > 0:
                     # 检查出场单是否足量
-                    if total_exit_size == round(self.position * (1 - self.pos_for_trail), symbol_tick_size[self.symbol]['min_qty']):
+                    expacted_exit_qty = round(self.position * (1 - self.pos_for_trail), symbol_tick_size[self.symbol]['min_qty'])
+                    if abs(total_exit_size - expacted_exit_qty) / expacted_exit_qty <= 0.02:
                         pass
                     else:
                         # 需要补单

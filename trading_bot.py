@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from functools import wraps
 import threading
 import time
 import requests
@@ -12,6 +13,7 @@ import constant as CONFIG
 from decimal import Decimal as D, ROUND_UP, getcontext
 from gate_api import ApiClient, Configuration, FuturesApi, FuturesOrder, FuturesPriceTriggeredOrder,FuturesPriceTrigger,FuturesInitialOrder, Transfer, WalletApi
 from gate_api.exceptions import GateApiException
+import secrets
 
 app = Flask(__name__)
 
@@ -27,11 +29,15 @@ app = Flask(__name__)
 WX_TOKEN = CONFIG.WX_TOKEN
 PRODUCT_TYPE = CONFIG.PRODUCT_TYPE
 SETTLE = CONFIG.SETTLE
+# 添加 Flask secret key
+app.secret_key = secrets.token_hex(16)
 
 ip_white_list = CONFIG.IP_WHITE_LIST
 # baseApi = baseApi.BitgetApi(CONFIG.API_KEY, CONFIG.API_SECRET, CONFIG.API_PASSPHRASE)
 gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
 futures_api = FuturesApi(ApiClient(gate_config))
+
+paused = False
 
 # 对币种信息预处理
 def prefix_symbol(s: str) -> str:
@@ -294,6 +300,7 @@ class GridTrader:
         self.total_usdt = 0
         self.every_zone_usdt = 0
         self.loss_decrease = 0
+        self.current_loss_decrease = 0
         self.direction = ""
         self.entry_config = ""
         self.exit_config = ""
@@ -312,12 +319,16 @@ class GridTrader:
         self.trail_high_price = 0 # 移动止盈的最高价格
         self.trail_low_price = 999999 # 移动止盈的最低价格
         self.stop_loss_order_id = None # 止损单ID
+        self.position = 0 # 持仓数量
+        self.mark_price = 0 # 标记价格
 
         logger.info(f'{symbol} GridTrader 初始化完成')
 
     def is_need_update_trading_params(self, data):
         """判断是否需要更新交易参数"""
         position = get_position(self.symbol)
+        if paused:
+            return False
         if data['direction'] != self.direction:
             # 反转的时候，需要更新交易参数
             return True
@@ -502,26 +513,13 @@ class GridTrader:
         logger.info(f'{self.symbol} 开始价格监控')
         
         while True:
+            if paused:
+                time.sleep(5)
+                continue
             try:
                 # 获取当前仓位和持仓方向
                 position = get_position(self.symbol)
-
-                # # 如果发现止损单和当前仓位不一致，则需要更新止损单
-                # if position > 0 and self.stop_loss_order_id is None:
-                #     # 创建止损单
-                #     self.stop_loss_order_id = place_price_trigger_order(self.symbol, "sell" if self.direction == "buy" else "buy", position, self.down_line, "limit", rule=2 if self.direction == "buy" else 1)
-                #     if self.stop_loss_order_id:
-                #         logger.info(f"{self.symbol}|止损单已经创建: {self.stop_loss_order_id}")
-                #     else:
-                #         logger.error(f"{self.symbol}|止损单创建失败")
-                # elif self.stop_loss_order_id:
-                #     # 检查止损单是否已经成交
-                #     order_detail = query_order(self.symbol, self.stop_loss_order_id)
-                #     if order_detail and order_detail['state'] == 'filled':
-                #         # 止损单已经成交，说明该区间的逻辑结束了
-                #         cancel_all_orders(self.symbol)
-                #         logger.info(f"{self.symbol}|止损单已经成交，区间逻辑结束")
-                    
+                self.position = position if self.direction == "buy" else -position
                 # 获取当前所有挂单
                 pending_orders = get_pending_orders(self.symbol)
                 
@@ -625,11 +623,15 @@ class GridTrader:
                 mark_price = get_mark_price(self.symbol)
                 if mark_price:
                     mark_price = float(mark_price)
+                    self.mark_price = mark_price
+                    is_profit = 0 # 0表示未平仓，-1表示亏损，1表示盈利
                     if self.direction == "buy":
                         if mark_price < self.down_line:
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
                             logger.info(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
+                            send_wx_notification(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
+                            is_profit = -1
                         if mark_price > self.trail_active_price:
                             logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price > self.trail_high_price:
@@ -639,11 +641,15 @@ class GridTrader:
                             # 平仓
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
+                            send_wx_notification(f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束")
+                            is_profit = 1
                     elif self.direction == "sell":
                         if mark_price > self.down_line:
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
                             logger.info(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
+                            send_wx_notification(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
+                            is_profit = -1
                         if mark_price < self.trail_active_price:
                             logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price < self.trail_low_price:
@@ -653,11 +659,25 @@ class GridTrader:
                             # 平仓
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
-                time.sleep(2)  # 每2秒检查一次
+                            send_wx_notification(f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束")
+                            is_profit = 1
+                    if is_profit != 0:
+                        if is_profit > 0:
+                            # 如果之前有降低仓位，则需要将仓位补上
+                            if self.current_loss_decrease > 0:
+                                self.current_loss_decrease -= self.loss_decrease
+                            # 如果没有降低仓位，则无需操作
+                            if self.current_loss_decrease == 0:
+                                pass
+                        if is_profit < 0:
+                            # 如果产生亏损，则需要降低仓位
+                            self.current_loss_decrease += self.loss_decrease
+
+                time.sleep(1)  # 每1秒检查一次
                 
             except Exception as e:
                 logger.error(f'{self.symbol} 监控价格时发生错误: {str(e)}')
-                time.sleep(2)
+                time.sleep(1)
                 
     def stop_monitoring(self):
         """停止价格监控"""
@@ -701,16 +721,146 @@ def handle_message():
         logger.error(f'设置交易参数失败: {str(e)}')
         return jsonify({"status": "error", "message": str(e)})
 
+# @app.before_request
+# def before_req():
+#     logger.info(request.json)
+#     if request.json is None:
+#         return jsonify({'error': '请求体不能为空'}), 400
+#     if request.remote_addr not in ip_white_list:
+#         logger.info(f'ipWhiteList: {ip_white_list}')
+#         logger.info(f'ip is not in ipWhiteList: {request.remote_addr}')
+#         return jsonify({'error': 'ip is not in ipWhiteList'}), 403
+
 @app.before_request
 def before_req():
-    logger.info(request.json)
-    if request.json is None:
-        return jsonify({'error': '请求体不能为空'}), 400
-    if request.remote_addr not in ip_white_list:
-        logger.info(f'ipWhiteList: {ip_white_list}')
-        logger.info(f'ip is not in ipWhiteList: {request.remote_addr}')
-        return jsonify({'error': 'ip is not in ipWhiteList'}), 403
+    # 排除登录路由和静态文件
+    if request.path == '/login' or request.path == '/' or request.path.startswith('/static'):
+        return
+        
+    # 只对 POST 请求进行 JSON 和 IP 检查
+    if request.method == 'POST':
+        # 检查 Content-Type
+        if not request.is_json:
+            return jsonify({'error': 'Content-Type 必须是 application/json'}), 415
+            
+        if request.json is None:
+            return jsonify({'error': '请求体不能为空'}), 400
+            
+        if request.path != '/update_config' and request.remote_addr not in ip_white_list:
+            logger.info(f'ipWhiteList: {ip_white_list}')
+            logger.info(f'ip is not in ipWhiteList: {request.remote_addr}')
+            return jsonify({'error': 'ip is not in ipWhiteList'}), 403
 
+# 添加登录验证装饰器
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# 登录路由
+@app.route('/', methods=['GET'])
+@app.route('/login', methods=['GET', "POST"])
+def login():
+    if request.method == 'POST':
+        password = request.form.get('password')
+        if password == 'andy123':
+            session['logged_in'] = True
+            return redirect(url_for('config'))
+        return render_template('login.html', error='密码错误')
+    return render_template('login.html')
+
+# 配置页面路由
+@app.route('/config', methods=['GET'])
+@login_required
+def config():
+    return render_template('config.html')
+
+# 更新配置接口
+@app.route('/update_config', methods=['POST'])
+@login_required
+def update_config():
+    try:
+        data = request.get_json()
+        api_key = data.get('api_key')
+        api_secret = data.get('api_secret')
+        environment = data.get('environment')
+        
+        # 更新 client
+        # global client
+        # base_url = 'https://fapi.binance.com' if environment == 'PRD' else 'https://testnet.binancefuture.com'
+        # client = Client(api_key, api_secret, **{'base_url': base_url})
+        global futures_api
+        gate_config = Configuration(key=api_key, secret=api_secret, host="https://fx-api-testnet.gateio.ws/api/v4" if environment == 'TEST' else "https://fx-api.gateio.ws/api/v4")
+        futures_api = FuturesApi(ApiClient(gate_config))
+
+        set_position_mode(False)
+        
+        return jsonify({"status": "success", "message": "配置更新成功"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/reset_trading', methods=['GET'])
+@login_required
+def reset_trading():
+    try:
+        # global trading_pairs
+        # trading_pairs = {}
+        # 清空JSON文件
+        # save_trading_pairs(trading_pairs)
+        logger.info('所有交易参数已重置')
+        return jsonify({"status": "success", "message": "所有交易参数已重置"})
+    except Exception as e:
+        logger.error(f'重置交易参数失败: {str(e)}')
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/get_trading_pairs', methods=['GET'])
+@login_required
+def get_trading_pairs():
+    try:
+        pairs_data = {}
+        for symbol, trader in trading_pairs.items():
+            pairs_data[symbol] = {
+                'symbol': symbol,
+                'zone_usdt': trader.zone_usdt,
+                'loss_decrease': trader.current_loss_decrease,
+                'direction': trader.direction,
+                'position': trader.position,
+                'mark_price': trader.mark_price,
+                'entry_config': trader.entry_config,
+                'exit_config': trader.exit_config,
+                'pos_for_trail': trader.pos_for_trail,
+                'trail_active_price': trader.trail_active_price,
+                'trail_callback': trader.trail_callback,
+                'up_line': trader.up_line,
+                'down_line': trader.down_line,
+                'running': trader.running,
+                'entry_list': trader.entry_list,
+                'exit_list': trader.exit_list
+            }
+        return jsonify({
+            "status": "success", 
+            "data": pairs_data,
+            "paused": paused
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/toggle_pause', methods=['GET'])
+@login_required
+def toggle_pause():
+    try:
+        global paused
+        paused = not paused
+        return jsonify({
+            "status": "success", 
+            "message": "策略已暂停" if paused else "策略已启动",
+            "paused": paused
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
 

@@ -40,6 +40,12 @@ gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3
 futures_api = FuturesApi(ApiClient(gate_config))
 
 paused = True
+is_logined = False # 是否登录
+
+symbol_tick_size = {} # 币种精度
+
+api_key = ""
+api_secret = ""
 
 # 对币种信息预处理
 def prefix_symbol(s: str) -> str:
@@ -276,20 +282,21 @@ def get_mark_price(symbol):
 
 # 设置持仓模式
 set_position_mode(False)
-symbol_tick_size = {}
 
 # 获取币种的精度
-try:
-    exchange_info = futures_api.list_futures_contracts(SETTLE)
-    for item in exchange_info:
-        symbol_tick_size[item.name] = {
-            'tick_size': len(str(float(item.order_price_round)).split('.')[-1].rstrip('0')),
-            'min_qty': len(str(float(item.order_size_min)).split('.')[-1].rstrip('0')),
-            "qty_to_contract": float(item.quanto_multiplier)
-        }
-    logger.info(f'获取币种精度成功')
-except GateApiException as ex:
-    logger.error(f'获取币种精度失败，错误: {ex}')
+def get_symbol_tick_size():
+    try:
+        global symbol_tick_size
+        exchange_info = futures_api.list_futures_contracts(SETTLE)
+        for item in exchange_info:
+            symbol_tick_size[item.name] = {
+                'tick_size': len(str(float(item.order_price_round)).split('.')[-1].rstrip('0')),
+                'min_qty': len(str(float(item.order_size_min)).split('.')[-1].rstrip('0')),
+                "qty_to_contract": float(item.quanto_multiplier)
+            }
+        logger.info(f'获取币种精度成功')
+    except GateApiException as ex:
+        logger.error(f'获取币种精度失败，错误: {ex}')
 
 def amountConvertToContract(_symbol, _amount):
     """将数量转换为张数"""
@@ -333,6 +340,8 @@ class GridTrader:
 
     def is_need_update_trading_params(self, data):
         """判断是否需要更新交易参数"""
+        if not is_logined:
+            return False
         position = get_position(self.symbol)
         if paused:
             return False
@@ -509,11 +518,16 @@ class GridTrader:
                 return None
 
     def monitor_price(self):
+        global paused, is_logined
         """监控价格并更新止损"""
         self.is_monitoring = True
         logger.info(f'{self.symbol} 开始价格监控')
         
         while True:
+            if not is_logined:
+                paused = True
+                time.sleep(5)
+                continue
             if paused:
                 time.sleep(5)
                 continue
@@ -700,11 +714,31 @@ class GridTrader:
 #   "trail_callback": 0.1, // 当价格从高点回落10%的时候，止盈出场
 #   "up_line": 0, // 上轨
 #   "down_line": 0, // 下轨
+#   "api_key": "baffffe996db428683cc4c9ea945ad87", // 交易所API key
+#   "api_secret": "a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", // 交易所API secret
+#   "env": "TEST/PRD", // 环境
 # }
 # 
 @app.route('/message', methods=['POST'])
 def handle_message():
     try:
+        global api_key, api_secret, is_logined, futures_api
+        if not is_logined or api_key != data['api_key'] or api_secret != data['api_secret']:
+            if data['api_key'] and data['api_secret']:
+                api_key = data['api_key']
+                api_secret = data['api_secret']
+                environment = data['env']
+                host = "https://fx-api-testnet.gateio.ws/api/v4" if environment == 'TEST' else "https://fx-api.gateio.ws/api/v4"
+                gate_config = Configuration(key=api_key, secret=api_secret, host=host)
+                futures_api = FuturesApi(ApiClient(gate_config))
+                account_res = futures_api.list_futures_accounts(SETTLE)
+                if account_res:
+                    get_symbol_tick_size()
+                    is_logined = True
+                    logger.info(f'登录成功')
+            else:
+                return jsonify({"status": "error", "message": "API key 或 secret 不能为空"})
+            
         data = request.get_json()
         symbol = prefix_symbol(data['symbol'])
         logger.info(f'收到 {symbol} 的新交易参数请求: {json.dumps(data, ensure_ascii=False)}')
@@ -784,20 +818,23 @@ def config():
 @login_required
 def update_config():
     try:
+        global api_key, api_secret, is_logined, futures_api
         data = request.get_json()
-        api_key = data.get('api_key')
-        api_secret = data.get('api_secret')
-        environment = data.get('environment')
-        
-        # 更新 client
-        # global client
-        # base_url = 'https://fapi.binance.com' if environment == 'PRD' else 'https://testnet.binancefuture.com'
-        # client = Client(api_key, api_secret, **{'base_url': base_url})
-        global futures_api
-        gate_config = Configuration(key=api_key, secret=api_secret, host="https://fx-api-testnet.gateio.ws/api/v4" if environment == 'TEST' else "https://fx-api.gateio.ws/api/v4")
-        futures_api = FuturesApi(ApiClient(gate_config))
-
-        set_position_mode(False)
+        if not is_logined or api_key != data['api_key'] or api_secret != data['api_secret']:
+            if data['api_key'] and data['api_secret']:
+                api_key = data['api_key']
+                api_secret = data['api_secret']
+                environment = data['environment']
+                host = "https://fx-api-testnet.gateio.ws/api/v4" if environment == 'TEST' else "https://fx-api.gateio.ws/api/v4"
+                gate_config = Configuration(key=api_key, secret=api_secret, host=host)
+                futures_api = FuturesApi(ApiClient(gate_config))
+                account_res = futures_api.list_futures_accounts(SETTLE)
+                if account_res:
+                    get_symbol_tick_size()
+                    is_logined = True
+                    logger.info(f'登录成功')
+            else:
+                return jsonify({"status": "error", "message": "API key 或 secret 不能为空"})
         
         return jsonify({"status": "success", "message": "配置更新成功"})
     except Exception as e:
@@ -856,10 +893,18 @@ def get_trading_pairs():
                 'entry_list': trader.entry_list,
                 'exit_list': trader.exit_list
             }
+            
+        # 处理 API 和 Secret 的显示
+        masked_api = f"{api_key[:3]}{'*' * (len(api_key)-3)}" if api_key else ""
+        masked_secret = f"{api_secret[:3]}{'*' * (len(api_secret)-3)}" if api_secret else ""
+        
         return jsonify({
             "status": "success", 
             "data": pairs_data,
-            "paused": paused
+            "paused": paused,
+            "is_logined": is_logined,
+            "api_key": masked_api,
+            "api_secret": masked_secret
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
@@ -869,6 +914,9 @@ def get_trading_pairs():
 def toggle_pause():
     try:
         global paused
+
+        if not is_logined:
+            return jsonify({"status": "error", "message": "请先登录"})
         paused = not paused
         return jsonify({
             "status": "success", 

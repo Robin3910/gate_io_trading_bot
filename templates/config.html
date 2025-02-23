@@ -132,13 +132,24 @@
 <body>
     <div class="config-container">
         <h2>Gate.io API 配置</h2>
+        <div id="loginStatus" style="margin-bottom: 20px; padding: 10px; border-radius: 8px; font-size: 14px;">
+            <div style="margin-bottom: 10px;">
+                登录状态：<span id="loginStatusText" style="font-weight: bold;"></span>
+            </div>
+            <div style="margin-bottom: 5px;">
+                API Key：<span id="apiKeyText"></span>
+            </div>
+            <div>
+                API Secret：<span id="apiSecretText"></span>
+            </div>
+        </div>
         <div class="form-group">
             <label for="api_key">API Key:</label>
-            <input type="text" id="api_key" required>
+            <input type="text" id="api_key" placeholder="请输入API Key(如果“已登录”，则不需要再次输入，除非要修改账号)" required>
         </div>
         <div class="form-group">
             <label for="api_secret">API Secret:</label>
-            <input type="text" id="api_secret" required>
+            <input type="text" id="api_secret" placeholder="请输入API Secret(如果“已登录”，则不需要再次输入，除非要修改账号)" required>
         </div>
         <div class="form-group">
             <label for="environment">环境:</label>
@@ -147,7 +158,7 @@
                 <option value="PRD">生产环境</option>
             </select>
         </div>
-        <button onclick="saveConfig()">保存配置</button>
+        <button onclick="saveConfig()">保存API配置</button>
         
         <div style="margin-top: 10px;">
             <button id="pauseButton" onclick="togglePause()" style="background-color: #ffc107; color: #000;">
@@ -216,6 +227,8 @@
                 if (data.status === 'success') {
                     messageDiv.className = 'message success';
                     messageDiv.textContent = data.message;
+                    // 在保存配置成功后立即加载最新状态
+                    loadTradingPairs();
                 } else {
                     messageDiv.className = 'message error';
                     messageDiv.textContent = data.message;
@@ -244,6 +257,11 @@
                     const messageDiv = document.getElementById('message');
                     messageDiv.style.display = 'block';
                     messageDiv.className = 'message success';
+                    messageDiv.textContent = data.message;
+                } else {
+                    const messageDiv = document.getElementById('message');
+                    messageDiv.style.display = 'block';
+                    messageDiv.className = 'message error';
                     messageDiv.textContent = data.message;
                 }
             })
@@ -305,6 +323,28 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.status === 'success') {
+                        // 更新登录状态显示
+                        const loginStatus = document.getElementById('loginStatusText');
+                        const apiKeyText = document.getElementById('apiKeyText');
+                        const apiSecretText = document.getElementById('apiSecretText');
+                        const loginStatusDiv = document.getElementById('loginStatus');
+                        
+                        if (data.is_logined) {
+                            loginStatus.textContent = '已登录';
+                            loginStatus.style.color = '#28a745';
+                            apiKeyText.textContent = data.api_key;
+                            apiSecretText.textContent = data.api_secret;
+                            loginStatusDiv.style.backgroundColor = '#d4edda';
+                            loginStatusDiv.style.border = '1px solid #c3e6cb';
+                        } else {
+                            loginStatus.textContent = '未登录';
+                            loginStatus.style.color = '#dc3545';
+                            apiKeyText.textContent = '未设置';
+                            apiSecretText.textContent = '未设置';
+                            loginStatusDiv.style.backgroundColor = '#f8d7da';
+                            loginStatusDiv.style.border = '1px solid #f5c6cb';
+                        }
+                        
                         // 更新暂停按钮状态
                         updatePauseButton(data.paused);
                         // 更新策略状态显示

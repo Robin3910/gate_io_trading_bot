@@ -24,6 +24,8 @@ app = Flask(__name__)
 # 4、补充处理失败的时候，微信发出告警
 # 5、测试指标到服务器的逻辑
 # 6、待写逻辑：如果亏损了，下一次要减少开仓。如果盈利了，下次再恢复回来
+# 7、重置策略状态的时候，需要先暂停策略，再重置，再恢复策略 - done
+# 8、
 
 # 配置信息
 WX_TOKEN = CONFIG.WX_TOKEN
@@ -805,12 +807,27 @@ def update_config():
 @login_required
 def reset_trading():
     try:
-        # global trading_pairs
-        # trading_pairs = {}
-        # 清空JSON文件
-        # save_trading_pairs(trading_pairs)
+        global trading_pairs, paused
+        original_paused_state = paused
+        
+        # 如果策略正在运行，先暂停
+        if not paused:
+            paused = True
+            time.sleep(2)  # 给一些时间让现有操作完成
+            
+        # 重置交易对信息
+        trading_pairs = {}
+        
+        # 恢复原始暂停状态
+        if not original_paused_state:
+            paused = False
+            
         logger.info('所有交易参数已重置')
-        return jsonify({"status": "success", "message": "所有交易参数已重置"})
+        return jsonify({
+            "status": "success", 
+            "message": "所有交易参数已重置",
+            "paused": paused
+        })
     except Exception as e:
         logger.error(f'重置交易参数失败: {str(e)}')
         return jsonify({"status": "error", "message": str(e)})

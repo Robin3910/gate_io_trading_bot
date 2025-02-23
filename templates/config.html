@@ -153,6 +153,9 @@
             <button id="pauseButton" onclick="togglePause()" style="background-color: #ffc107; color: #000;">
                 加载中...
             </button>
+            <button onclick="resetTrading()" style="background-color: #6c757d; color: #fff; margin-top: 10px;">
+                重置策略状态
+            </button>
         </div>
         <div id="message" class="message" style="display: none;"></div>
     </div>
@@ -335,6 +338,39 @@
                     }
                 })
                 .catch(error => console.error('Error loading trading pairs:', error));
+        }
+
+        function resetTrading() {
+            if (!confirm('确定要重置所有策略状态吗？这将清空所有交易对的配置信息。')) {
+                return;
+            }
+            
+            fetch('/reset_trading', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                const messageDiv = document.getElementById('message');
+                messageDiv.style.display = 'block';
+                if (data.status === 'success') {
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = data.message;
+                    // 刷新交易对状态表格
+                    loadTradingPairs();
+                } else {
+                    messageDiv.className = 'message error';
+                    messageDiv.textContent = data.message;
+                }
+            })
+            .catch(error => {
+                const messageDiv = document.getElementById('message');
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '重置失败：' + error;
+            });
         }
 
         // 页面加载时获取数据

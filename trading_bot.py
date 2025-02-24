@@ -25,7 +25,6 @@ app = Flask(__name__)
 # 5、测试指标到服务器的逻辑
 # 6、待写逻辑：如果亏损了，下一次要减少开仓。如果盈利了，下次再恢复回来
 # 7、重置策略状态的时候，需要先暂停策略，再重置，再恢复策略 - done
-# 8、
 
 # 配置信息
 WX_TOKEN = CONFIG.WX_TOKEN
@@ -33,6 +32,7 @@ PRODUCT_TYPE = CONFIG.PRODUCT_TYPE
 SETTLE = CONFIG.SETTLE
 # 添加 Flask secret key
 app.secret_key = secrets.token_hex(16)
+
 
 ip_white_list = CONFIG.IP_WHITE_LIST
 # baseApi = baseApi.BitgetApi(CONFIG.API_KEY, CONFIG.API_SECRET, CONFIG.API_PASSPHRASE)
@@ -722,24 +722,27 @@ class GridTrader:
 @app.route('/message', methods=['POST'])
 def handle_message():
     try:
-        global api_key, api_secret, is_logined, futures_api
-        if not is_logined or api_key != data['api_key'] or api_secret != data['api_secret']:
-            if data['api_key'] and data['api_secret']:
-                api_key = data['api_key']
-                api_secret = data['api_secret']
-                environment = data['env']
-                host = "https://fx-api-testnet.gateio.ws/api/v4" if environment == 'TEST' else "https://fx-api.gateio.ws/api/v4"
-                gate_config = Configuration(key=api_key, secret=api_secret, host=host)
-                futures_api = FuturesApi(ApiClient(gate_config))
-                account_res = futures_api.list_futures_accounts(SETTLE)
-                if account_res:
-                    get_symbol_tick_size()
-                    is_logined = True
-                    logger.info(f'登录成功')
-            else:
-                return jsonify({"status": "error", "message": "API key 或 secret 不能为空"})
-            
+        if not is_logined:
+            return jsonify({"status": "error", "message": "未登录"})
+
         data = request.get_json()
+        # global api_key, api_secret, is_logined, futures_api
+        # if not is_logined or api_key != data['api_key'] or api_secret != data['api_secret']:
+        #     if data['api_key'] and data['api_secret']:
+        #         api_key = data['api_key']
+        #         api_secret = data['api_secret']
+        #         environment = data['env'].upper()
+        #         host = "https://fx-api-testnet.gateio.ws/api/v4" if environment == 'TEST' else "https://fx-api.gateio.ws/api/v4"
+        #         gate_config = Configuration(key=api_key, secret=api_secret, host=host)
+        #         futures_api = FuturesApi(ApiClient(gate_config))
+        #         account_res = futures_api.list_futures_accounts(SETTLE)
+        #         if account_res:
+        #             get_symbol_tick_size()
+        #             is_logined = True
+        #             logger.info(f'登录成功')
+        #     else:
+        #         return jsonify({"status": "error", "message": "API key 或 secret 不能为空"})
+            
         symbol = prefix_symbol(data['symbol'])
         logger.info(f'收到 {symbol} 的新交易参数请求: {json.dumps(data, ensure_ascii=False)}')
         

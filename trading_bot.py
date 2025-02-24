@@ -327,7 +327,6 @@ class GridTrader:
         self.entry_list = []
         self.exit_list = []
         self.paused = False # 是否暂停
-        self.running = False # 是否运行
         self.monitor_thread = None # 监控线程
         self.loss_count = 0 # 亏损次数
         self.trail_high_price = 0 # 移动止盈的最高价格
@@ -335,11 +334,14 @@ class GridTrader:
         self.stop_loss_order_id = None # 止损单ID
         self.position = 0 # 持仓数量
         self.mark_price = 0 # 标记价格
+        self.is_handling = False # 是否正在处理
 
         logger.info(f'{symbol} GridTrader 初始化完成')
 
     def is_need_update_trading_params(self, data):
         """判断是否需要更新交易参数"""
+        while self.is_handling:
+            return False
         if not is_logined:
             return False
         position = get_position(self.symbol)
@@ -360,6 +362,7 @@ class GridTrader:
     def update_trading_params(self, data):
         if self.is_need_update_trading_params(data):
             try:
+                self.is_handling = True
                 # 平仓
                 close_position(self.symbol)
                 # 取消所有挂单
@@ -513,8 +516,10 @@ class GridTrader:
                 if self.monitor_thread is None:
                     self.monitor_thread = threading.Thread(target=self.monitor_price)
                     self.monitor_thread.start()
+                self.is_handling = False
             except Exception as e:
                 logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
+                self.is_handling = False
                 return None
 
     def monitor_price(self):
@@ -524,12 +529,16 @@ class GridTrader:
         logger.info(f'{self.symbol} 开始价格监控')
         
         while True:
+            if self.is_handling:
+                # 如果发现当前正在处理，就先等待
+                time.sleep(3)
+                continue
             if not is_logined:
                 paused = True
-                time.sleep(5)
+                time.sleep(3)
                 continue
             if paused:
-                time.sleep(5)
+                time.sleep(3)
                 continue
             try:
                 # 获取当前仓位和持仓方向
@@ -688,11 +697,11 @@ class GridTrader:
                             # 如果产生亏损，则需要降低仓位
                             self.current_loss_decrease += self.loss_decrease
 
-                time.sleep(1)  # 每1秒检查一次
+                time.sleep(3)  # 每1秒检查一次
                 
             except Exception as e:
                 logger.error(f'{self.symbol} 监控价格时发生错误: {str(e)}')
-                time.sleep(1)
+                time.sleep(3)
                 
     def stop_monitoring(self):
         """停止价格监控"""
@@ -893,7 +902,6 @@ def get_trading_pairs():
                 'trail_callback': trader.trail_callback,
                 'up_line': trader.up_line,
                 'down_line': trader.down_line,
-                'running': trader.running,
                 'entry_list': trader.entry_list,
                 'exit_list': trader.exit_list
             }

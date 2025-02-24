@@ -281,7 +281,7 @@ def get_mark_price(symbol):
         return None
 
 # 设置持仓模式
-set_position_mode(False)
+# set_position_mode(False)
 
 # 获取币种的精度
 def get_symbol_tick_size():
@@ -833,6 +833,7 @@ def update_config():
                 futures_api = FuturesApi(ApiClient(gate_config))
                 account_res = futures_api.list_futures_accounts(SETTLE)
                 if account_res:
+                    set_position_mode(False)
                     get_symbol_tick_size()
                     is_logined = True
                     logger.info(f'登录成功')

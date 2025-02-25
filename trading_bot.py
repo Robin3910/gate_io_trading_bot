@@ -376,7 +376,7 @@ class GridTrader:
                         "qty_to_contract": float(contract_info.quanto_multiplier)
                     }
                 # 更新新的方向的参数
-                logger.info(f'更新交易参数: {json.dumps(data, ensure_ascii=False)}')
+                logger.info(f'{self.symbol} |更新交易参数: {json.dumps(data, ensure_ascii=False)}')
                 self.total_usdt = float(data['total_usdt'])
                 self.every_zone_usdt = float(data['every_zone_usdt']) # 百分数
                 self.loss_decrease = float(data['loss_decrease'])
@@ -421,7 +421,7 @@ class GridTrader:
                                 "qty": entry_qty, # 投入数量
                                 "order_id": None # 订单ID
                             })
-                        logger.info(f'入场配置解析结果: {json.dumps(self.entry_list, ensure_ascii=False)}')
+                        logger.info(f'{self.symbol} |入场配置解析结果: {json.dumps(self.entry_list, ensure_ascii=False)}')
                     
                     # 解析出场配置
                     self.exit_list = []
@@ -436,7 +436,7 @@ class GridTrader:
                                 'percent': exit_percent,  # 离场资金百分比
                                 'order_id': None # 订单ID
                             })
-                        logger.info(f'出场配置解析结果: {json.dumps(self.exit_list, ensure_ascii=False)}')
+                        logger.info(f'{self.symbol} |出场配置解析结果: {json.dumps(self.exit_list, ensure_ascii=False)}')
 
                     # 挂上限价单
                     order_list = []
@@ -479,7 +479,7 @@ class GridTrader:
                                 "qty": entry_qty, # 投入数量
                                 "order_id": None # 订单ID
                             })
-                        logger.info(f'入场配置解析结果: {json.dumps(self.entry_list, ensure_ascii=False)}')
+                        logger.info(f'{self.symbol} |入场配置解析结果: {json.dumps(self.entry_list, ensure_ascii=False)}')
                     
                     # 解析出场配置
                     self.exit_list = []
@@ -494,7 +494,7 @@ class GridTrader:
                                 'percent': exit_percent,  # 离场资金百分比
                                 'order_id': None # 订单ID
                             })
-                        logger.info(f'出场配置解析结果: {json.dumps(self.exit_list, ensure_ascii=False)}')
+                        logger.info(f'{self.symbol} |出场配置解析结果: {json.dumps(self.exit_list, ensure_ascii=False)}')
 
                     # 挂限价单
                     order_list = []
@@ -514,9 +514,9 @@ class GridTrader:
                     self.monitor_thread = threading.Thread(target=self.monitor_price)
                     self.monitor_thread.start()
                 self.is_handling = False
-                # send_wx_notification(f'{self.symbol} 更新交易参数成功|执行新的区间逻辑')
+                logger.info(f'{self.symbol} 更新交易参数成功|开始监控新的区间逻辑 {json.dumps(data, ensure_ascii=False)}')
             except Exception as e:
-                logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
+                logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}|数据：{json.dumps(data, ensure_ascii=False)}')
                 send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
                 self.is_handling = False
                 return None
@@ -620,6 +620,7 @@ class GridTrader:
                     if abs(total_exit_size - expacted_exit_qty) / expacted_exit_qty <= 0.02:
                         pass
                     else:
+                        logger.info(f'{self.symbol} 需要补齐出场单|预期出场数量：{expacted_exit_qty}|当前挂单出场数量：{total_exit_size}')
                         # 需要补单
                         # 取消所有现有的入场挂单
                         if exit_orders:
@@ -690,12 +691,14 @@ class GridTrader:
                             # 如果之前有降低仓位，则需要将仓位补上
                             if self.current_loss_decrease > 0:
                                 self.current_loss_decrease -= self.loss_decrease
+                                logger.info(f'{self.symbol} 盈利|恢复仓位|当前递减值：{self.current_loss_decrease}')
                             # 如果没有降低仓位，则无需操作
                             if self.current_loss_decrease == 0:
                                 pass
                         if is_profit < 0:
                             # 如果产生亏损，则需要降低仓位
                             self.current_loss_decrease += self.loss_decrease
+                            logger.info(f'{self.symbol} 产生亏损|降低仓位|当前递减值：{self.current_loss_decrease}')
 
                 time.sleep(3)  # 每1秒检查一次
                 

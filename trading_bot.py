@@ -345,15 +345,15 @@ class GridTrader:
         if not is_logined:
             return False
         position = get_position(self.symbol)
+        up_line = round(float(data['up_line']), symbol_tick_size[self.symbol]['tick_size'])
+        down_line = round(float(data['down_line']), symbol_tick_size[self.symbol]['tick_size'])
+        
         if paused:
             return False
         if data['direction'] != self.direction:
             # 反转的时候，需要更新交易参数
             return True
-        elif data['direction'] == self.direction and position == 0 and self.direction == "buy" and (float(data['up_line']) != self.up_line or float(data['down_line']) != self.down_line):
-            # 无仓位的时候，如果上下沿价格改变，则需要更新交易参数
-            return True
-        elif data['direction'] == self.direction and position == 0 and self.direction == "sell" and (float(data['up_line']) != self.up_line or float(data['down_line']) != self.down_line):
+        elif data['direction'] == self.direction and position == 0 and (up_line != self.up_line or down_line != self.down_line):
             # 无仓位的时候，如果上下沿价格改变，则需要更新交易参数
             return True
         else:

@@ -344,12 +344,11 @@ class GridTrader:
             return False
         if not is_logined:
             return False
+        if paused:
+            return False
         position = get_position(self.symbol)
         up_line = round(float(data['up_line']), symbol_tick_size[self.symbol]['tick_size'])
         down_line = round(float(data['down_line']), symbol_tick_size[self.symbol]['tick_size'])
-        
-        if paused:
-            return False
         if data['direction'] != self.direction:
             # 反转的时候，需要更新交易参数
             return True
@@ -515,8 +514,10 @@ class GridTrader:
                     self.monitor_thread = threading.Thread(target=self.monitor_price)
                     self.monitor_thread.start()
                 self.is_handling = False
+                # send_wx_notification(f'{self.symbol} 更新交易参数成功|执行新的区间逻辑')
             except Exception as e:
                 logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
+                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
                 self.is_handling = False
                 return None
 

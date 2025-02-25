@@ -396,8 +396,6 @@ class GridTrader:
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
 
-
-
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
                     #  ^
@@ -569,16 +567,17 @@ class GridTrader:
                             else:
                                 total_exit_size += abs(float(order.size))
                                 exit_orders.append(str(order.id))
-                logger.info(f'{self.symbol} 当前入场挂单总数量: {total_entry_size}')
+                # logger.info(f'{self.symbol} 当前入场挂单总数量: {total_entry_size}')
 
                 # 计算预期需要入场的总数量
                 expected_entry_size = 0
                 for entry in self.entry_list:
                     expected_entry_size += entry['qty']
-                logger.info(f'{self.symbol} 预期入场总数量: {expected_entry_size}')
+                # logger.info(f'{self.symbol} 预期入场总数量: {expected_entry_size}')
 
                 # 需要补入场单
                 if total_entry_size + self.position < expected_entry_size:
+                    logger.info(f'{self.symbol} 需要补入场单|预期入场数量：{expected_entry_size}|当前挂单+持仓：{total_entry_size+self.position}')
                     # 取消所有现有的入场挂单
                     if entry_orders:
                         batch_cancel_orders(self.symbol, entry_orders)
@@ -701,6 +700,7 @@ class GridTrader:
                 
             except Exception as e:
                 logger.error(f'{self.symbol} 监控价格时发生错误: {str(e)}')
+                send_wx_notification(f'{self.symbol} 监控价格时发生错误: {str(e)}')
                 time.sleep(3)
                 
     def stop_monitoring(self):

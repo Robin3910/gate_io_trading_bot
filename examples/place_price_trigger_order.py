@@ -15,7 +15,7 @@ if __name__ == '__main__':
     gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
     futures_api = FuturesApi(ApiClient(gate_config))
     settle = SETTLE
-    symbol = "NEAR_USDT"
+    symbol = "SOL_USDT"
 
     # initial = {
     #     "contract": symbol,

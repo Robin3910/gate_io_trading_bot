@@ -139,19 +139,21 @@ def cancel_price_trigger_order(symbol):
 
 def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule=1, reduce_only=False):
     """下单"""
+    order_price = str(price)
+    trigger_price = str(price)
     if order_type == "limit":
         tif = "gtc"
     else:
         tif = "ioc"
-        price = 0
+        order_price = "0"
     
 
     if side == "sell":
         qty = -qty
     
     # rule 1 代表价格 >= 触发价时触发， 2 代表价格 <= 触发价时触发
-    initial_order = FuturesInitialOrder(contract=symbol, size=qty, price=str(price), tif=tif, reduce_only=reduce_only)
-    trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price=str(price), rule=rule)
+    initial_order = FuturesInitialOrder(contract=symbol, size=qty, price=order_price, tif=tif, reduce_only=reduce_only)
+    trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price=trigger_price, rule=rule)
     order = FuturesPriceTriggeredOrder(initial=initial_order, trigger=trigger_order)
     try:
         order_response = futures_api.create_price_triggered_order(SETTLE, order)
@@ -250,7 +252,7 @@ def cancel_all_orders(symbol):
             logger.info(f'{symbol}|取消挂单成功: {order_response}')
         else:
             logger.info(f'{symbol}|没有挂单')
-            
+
         # 取消价格触发单
         cancel_price_trigger_order(symbol)
     except GateApiException as ex:
@@ -351,7 +353,8 @@ class GridTrader:
         self.mark_price = 0 # 标记价格
         self.is_handling = False # 是否正在处理
         self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
-
+        self.pre_position = 0 # 监控中的上一个仓位值大小
+        
         logger.info(f'{symbol} GridTrader 初始化完成')
 
     def is_need_update_trading_params(self, data):
@@ -559,7 +562,8 @@ class GridTrader:
             try:
                 # 获取当前仓位和持仓方向
                 position = get_position(self.symbol)
-                self.position = position if self.direction == "buy" else -position
+                self.pre_position = self.position # 记录上一次的仓位值
+                self.position = position if self.direction == "buy" else -position # 更新当前仓位值
                 # 获取当前所有挂单
                 pending_orders = get_pending_orders(self.symbol)
                 
@@ -636,7 +640,8 @@ class GridTrader:
                 # 1、由于每次出场之后，还会保留一部分移动止盈的仓位，所以这部分移动止盈的仓位就又会被划分成多个分批止盈以及移动止盈
                 # 2、所以在第一次持有仓位的时候，记录仓位的值，如果后续的仓位一直没超过这个阈值，那无需更新出场单，维持第一次挂单的出场单
                 # 3、如果仓位超过这个阈值，则需要更新出场单，因为可能入场单又进场了，仓位更多，需要分配多余的仓位到各个分批止盈点上，以及加大移动止盈的数量
-                if self.position > 0 and self.position >= self.threshold_position_for_update:
+                # 4、只在仓位发生变化的时候才去更新，防止反复刷新
+                if self.position > 0 and self.position >= self.threshold_position_for_update and self.pre_position != self.position:
                     self.threshold_position_for_update = self.position
                     # 检查出场单是否足量
                     expacted_exit_qty = round(self.position * (1 - self.pos_for_trail), symbol_tick_size[self.symbol]['min_qty'])
@@ -663,7 +668,7 @@ class GridTrader:
                                     "orderType": "limit"
                                 })
                         # 挂价格触发止损单
-                        place_price_trigger_order(self.symbol, "sell" if self.direction == "buy" else "buy", self.position, self.down_line, "market", 2 if self.direction == "buy" else 1, True)
+                        place_price_trigger_order(symbol=self.symbol, side="sell" if self.direction == "buy" else "buy", qty=self.position, price=self.down_line, order_type="market", rule=2 if self.direction == "buy" else 1, reduce_only=True)
                         if new_exit_orders:
                             ret_list = batch_place_order(self.symbol, new_exit_orders, True)
                             for i in range(len(ret_list)):

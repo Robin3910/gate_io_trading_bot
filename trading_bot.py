@@ -19,12 +19,14 @@ app = Flask(__name__)
 
 # TODO 待办
 # 1、测试一下monitor_price的逻辑 - done
-# 2、需要补充一个页面，让用户可以配置API和secret，也可以手动停止策略的运行
-# 3、在页面中需要展示当前的策略运行情况，比如当前的仓位，当前的挂单，当前的止损单，当前的移动止盈单
-# 4、补充处理失败的时候，微信发出告警
-# 5、测试指标到服务器的逻辑
-# 6、待写逻辑：如果亏损了，下一次要减少开仓。如果盈利了，下次再恢复回来
+# 2、需要补充一个页面，让用户可以配置API和secret，也可以手动停止策略的运行 - done
+# 3、在页面中需要展示当前的策略参数，比如当前的仓位，当前的挂单，当前的止损单，当前的移动止盈单 - done
+# 4、补充处理失败的时候，微信发出告警 -done
+# 5、测试指标到服务器的逻辑 - done
+# 6、待写逻辑：如果亏损了，下一次要减少开仓。如果盈利了，下次再恢复回来 - done
 # 7、重置策略状态的时候，需要先暂停策略，再重置，再恢复策略 - done
+# 8、补充一下价格触发类型订单
+# 9、移动止盈仓位，在分批止盈之后就会被重新设置，需要修改一下，应该是设置好一次之后，不要重复去变化了，而是等待下一次入场单成交了，才能再去修改
 
 # 配置信息
 WX_TOKEN = CONFIG.WX_TOKEN
@@ -102,7 +104,7 @@ def setup_logger():
 
 logger = setup_logger()
 
-def place_order(symbol, side, qty, price, order_type="limit"):
+def place_order(symbol, side, qty, price, order_type="limit", reduce_only=False):
     """下单"""
     # 带price就是委托单，不带price是市价单
     if order_type == "limit":
@@ -115,7 +117,7 @@ def place_order(symbol, side, qty, price, order_type="limit"):
     if side == "sell":
         qty = -qty
         
-    order = FuturesOrder(contract=symbol, size=qty, price=price, tif=tif)
+    order = FuturesOrder(contract=symbol, size=qty, price=price, tif=tif, reduce_only=reduce_only)
     try:
         order_response = futures_api.create_futures_order(SETTLE, order)
         logger.info(f"order {order_response.id} created with status: {order_response.status}")
@@ -125,7 +127,17 @@ def place_order(symbol, side, qty, price, order_type="limit"):
         send_wx_notification(f"{symbol}|下单失败", f"下单失败: {ex}")
         return
 
-def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule=1):
+
+def cancel_price_trigger_order(symbol):
+    """取消价格触发单"""
+    try:
+        order_response = futures_api.cancel_price_triggered_order_list(SETTLE, contract=symbol)
+        return order_response
+    except GateApiException as ex:
+        logger.error(f"error encountered canceling price trigger order: {ex}")
+        send_wx_notification(f"{symbol}|取消价格触发单失败", f"取消价格触发单失败: {ex}")
+
+def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule=1, reduce_only=False):
     """下单"""
     if order_type == "limit":
         tif = "gtc"
@@ -138,7 +150,7 @@ def place_price_trigger_order(symbol, side, qty, price, order_type="limit", rule
         qty = -qty
     
     # rule 1 代表价格 >= 触发价时触发， 2 代表价格 <= 触发价时触发
-    initial_order = FuturesInitialOrder(contract=symbol, size=qty, price=str(price), tif=tif)
+    initial_order = FuturesInitialOrder(contract=symbol, size=qty, price=str(price), tif=tif, reduce_only=reduce_only)
     trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price=str(price), rule=rule)
     order = FuturesPriceTriggeredOrder(initial=initial_order, trigger=trigger_order)
     try:
@@ -183,7 +195,7 @@ def get_position(symbol):
         logger.error(f'{symbol}|获取仓位失败，错误: {ex}')
         return 0
 
-def batch_place_order(symbol, order_list):
+def batch_place_order(symbol, order_list, reduce_only=False):
     """批量下单"""
     try:
         place_order_list = []
@@ -201,7 +213,7 @@ def batch_place_order(symbol, order_list):
             if order['side'] == "sell":
                 qty = -qty
                 
-            order = FuturesOrder(contract=symbol, size=qty, price=price, tif=tif)
+            order = FuturesOrder(contract=symbol, size=qty, price=price, tif=tif, reduce_only=reduce_only)
             place_order_list.append(order)
         order_response = futures_api.create_batch_futures_order(SETTLE, place_order_list)
         return order_response
@@ -238,6 +250,9 @@ def cancel_all_orders(symbol):
             logger.info(f'{symbol}|取消挂单成功: {order_response}')
         else:
             logger.info(f'{symbol}|没有挂单')
+            
+        # 取消价格触发单
+        cancel_price_trigger_order(symbol)
     except GateApiException as ex:
         logger.error(f'{symbol}|取消挂单失败，错误: {ex}')
         send_wx_notification(f"{symbol}|取消所有挂单失败", f"取消挂单失败: {ex}")
@@ -335,6 +350,7 @@ class GridTrader:
         self.position = 0 # 持仓数量
         self.mark_price = 0 # 标记价格
         self.is_handling = False # 是否正在处理
+        self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
 
         logger.info(f'{symbol} GridTrader 初始化完成')
 
@@ -394,6 +410,7 @@ class GridTrader:
                 self.trail_high_price = 0 # 移动止盈的最高价格
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
+                self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
 
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
@@ -611,10 +628,16 @@ class GridTrader:
                             self.entry_list[i]['order_id'] = ret.id
                         logger.info(f'{self.symbol} 重新设置入场单成功: {json.dumps(new_entry_orders, ensure_ascii=False)}')
                
-                # 有仓位，没有出场单，就得把出场单补上，如果有入场单，则无需处理
+                # 有仓位，没有出场单，就得把出场单补上
                 # 先检查已有仓位和入场单的挂单是否匹配
                 # 如果匹配则无需处理
-                if self.position > 0:
+
+                # 更新出场单阈值（threshold_position_for_update）的逻辑介绍：
+                # 1、由于每次出场之后，还会保留一部分移动止盈的仓位，所以这部分移动止盈的仓位就又会被划分成多个分批止盈以及移动止盈
+                # 2、所以在第一次持有仓位的时候，记录仓位的值，如果后续的仓位一直没超过这个阈值，那无需更新出场单，维持第一次挂单的出场单
+                # 3、如果仓位超过这个阈值，则需要更新出场单，因为可能入场单又进场了，仓位更多，需要分配多余的仓位到各个分批止盈点上，以及加大移动止盈的数量
+                if self.position > 0 and self.position >= self.threshold_position_for_update:
+                    self.threshold_position_for_update = self.position
                     # 检查出场单是否足量
                     expacted_exit_qty = round(self.position * (1 - self.pos_for_trail), symbol_tick_size[self.symbol]['min_qty'])
                     if abs(total_exit_size - expacted_exit_qty) / expacted_exit_qty <= 0.02:
@@ -622,9 +645,10 @@ class GridTrader:
                     else:
                         logger.info(f'{self.symbol} 需要补齐出场单|预期出场数量：{expacted_exit_qty}|当前挂单出场数量：{total_exit_size}')
                         # 需要补单
-                        # 取消所有现有的入场挂单
+                        # 取消所有现有的出场挂单
                         if exit_orders:
                             batch_cancel_orders(self.symbol, exit_orders)
+                            cancel_price_trigger_order(self.symbol)
                             # 创建新的出场订单
                         new_exit_orders = []
                         for exit_conf in self.exit_list:
@@ -638,9 +662,10 @@ class GridTrader:
                                     "size": round(exit_qty, symbol_tick_size[self.symbol]['min_qty']),
                                     "orderType": "limit"
                                 })
-                        
+                        # 挂价格触发止损单
+                        place_price_trigger_order(self.symbol, "sell" if self.direction == "buy" else "buy", self.position, self.down_line, "market", 2 if self.direction == "buy" else 1, True)
                         if new_exit_orders:
-                            ret_list = batch_place_order(self.symbol, new_exit_orders)
+                            ret_list = batch_place_order(self.symbol, new_exit_orders, True)
                             for i in range(len(ret_list)):
                                 self.exit_list[i]['order_id'] = str(ret_list[i].id)
 

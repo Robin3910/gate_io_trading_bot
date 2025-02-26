@@ -17,23 +17,8 @@ if __name__ == '__main__':
     settle = SETTLE
     symbol = "NEAR_USDT"
 
-    # initial = {
-    #     "contract": symbol,
-    #     "size": -1,
-    #     "price": 92000,
-    #     "reduce_only": "true",
-    #     "tif": "gtc"
-    # }
-    # trigger = {
-    #     "strategy_type": 0,
-    #     "price_type": 0,
-    #     "price": 92000
-    # }
-    initial_order = FuturesInitialOrder(contract=symbol, price="0",size=-1, tif="ioc", reduce_only=True)
-    trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price="2.3", rule=2)
-    order = FuturesPriceTriggeredOrder(initial=initial_order, trigger=trigger_order)
     try:
-        order_response = futures_api.create_price_triggered_order(SETTLE, order)
+        order_response = futures_api.cancel_price_triggered_order_list(SETTLE, contract=symbol)
         print(order_response)
     except GateApiException as ex:
         print(f"error encountered creating futures order: {ex}")

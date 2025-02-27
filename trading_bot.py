@@ -537,8 +537,8 @@ class GridTrader:
                 logger.info(f'{self.symbol} 更新交易参数成功|开始监控新的区间逻辑 {json.dumps(data, ensure_ascii=False)}')
             except Exception as e:
                 logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}|数据：{json.dumps(data, ensure_ascii=False)}')
-                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
                 self.is_handling = False
+                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
                 return None
 
     def monitor_price(self):

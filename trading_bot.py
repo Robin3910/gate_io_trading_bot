@@ -329,7 +329,7 @@ class GridTrader:
     def __init__(self, symbol):
         self.symbol = symbol
         self.total_usdt = 0
-        self.every_zone_usdt = 0
+        self.every_zone_usdt = 0 # 预期一个区间要投入的金额占总资金的百分比
         self.loss_decrease = 0
         self.current_loss_decrease = 0
         self.direction = ""
@@ -354,6 +354,7 @@ class GridTrader:
         self.is_handling = False # 是否正在处理
         self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
         self.pre_position = 0 # 监控中的上一个仓位值大小
+        self.zone_usdt = 0 # 预期一个区间要投入的金额
         
         logger.info(f'{symbol} GridTrader 初始化完成')
 
@@ -414,7 +415,6 @@ class GridTrader:
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
                 self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
-
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
                     #  ^

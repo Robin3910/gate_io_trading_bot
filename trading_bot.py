@@ -355,6 +355,7 @@ class GridTrader:
         self.is_handling = False # 是否正在处理
         self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
         self.pre_position = 0 # 监控中的上一个仓位值大小
+        self.zone_usdt = 0 # 预期一个区间要投入的金额
         
         logger.info(f'{symbol} GridTrader 初始化完成')
 
@@ -417,7 +418,6 @@ class GridTrader:
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
                 self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
-
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
                     #  ^
@@ -540,8 +540,8 @@ class GridTrader:
                 logger.info(f'{self.symbol} 更新交易参数成功|开始监控新的区间逻辑 {json.dumps(data, ensure_ascii=False)}')
             except Exception as e:
                 logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}|数据：{json.dumps(data, ensure_ascii=False)}')
-                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
                 self.is_handling = False
+                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
                 return None
 
     def monitor_price(self):

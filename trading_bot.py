@@ -329,7 +329,8 @@ class GridTrader:
     def __init__(self, symbol):
         self.symbol = symbol
         self.total_usdt = 0
-        self.every_zone_usdt = 0
+        self.every_zone_usdt = 0 # 百分比
+        self.zone_usdt = 0 # 预期一个区间要投入的金额
         self.loss_decrease = 0
         self.current_loss_decrease = 0
         self.direction = ""
@@ -366,6 +367,8 @@ class GridTrader:
         if paused:
             return False
         position = get_position(self.symbol)
+        if position != 0:
+            return False
         up_line = round(float(data['up_line']), symbol_tick_size[self.symbol]['tick_size'])
         down_line = round(float(data['down_line']), symbol_tick_size[self.symbol]['tick_size'])
         if data['direction'] != self.direction:

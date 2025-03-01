@@ -15,7 +15,7 @@ if __name__ == '__main__':
     gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
     futures_api = FuturesApi(ApiClient(gate_config))
     settle = SETTLE
-    symbol = "SOL_USDT"
+    symbol = "BNB_USDT"
 
     # initial = {
     #     "contract": symbol,
@@ -29,8 +29,8 @@ if __name__ == '__main__':
     #     "price_type": 0,
     #     "price": 92000
     # }
-    initial_order = FuturesInitialOrder(contract=symbol, price="0",size=-1, tif="ioc", reduce_only=True)
-    trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price="2.3", rule=2)
+    initial_order = FuturesInitialOrder(contract=symbol, price="0",size=-100, tif="ioc", reduce_only=True)
+    trigger_order = FuturesPriceTrigger(strategy_type=0, price_type=0, price="590.15", rule=2)
     order = FuturesPriceTriggeredOrder(initial=initial_order, trigger=trigger_order)
     try:
         order_response = futures_api.create_price_triggered_order(SETTLE, order)

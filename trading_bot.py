@@ -309,8 +309,13 @@ def get_symbol_tick_size():
             symbol_tick_size[item.name] = {
                 'tick_size': len(str(float(item.order_price_round)).split('.')[-1].rstrip('0')),
                 'min_qty': len(str(float(item.order_size_min)).split('.')[-1].rstrip('0')),
-                "qty_to_contract": float(item.quanto_multiplier)
+                "qty_to_contract": float(item.quanto_multiplier),
+                "order_price_round": float(item.order_price_round)
             }
+
+            # if item.name == "BNB_USDT":
+            #     print(item)
+            #     print(symbol_tick_size[item.name])
         logger.info(f'获取币种精度成功')
     except GateApiException as ex:
         logger.error(f'获取币种精度失败，错误: {ex}')
@@ -321,6 +326,12 @@ def amountConvertToContract(_symbol, _amount):
     qty_to_contract = symbol_tick_size[_symbol]['qty_to_contract']
     return int(_amount / qty_to_contract)
 
+def round_to_step(price, step, decimal_places):
+    """将价格四舍五入到最小步长的倍数"""
+    # 将价格除以步长，四舍五入到整数，然后再乘以步长
+    rounded = round(price / step) * step
+    # 保留指定小数位
+    return round(rounded, decimal_places)
 
 # 创建全局字典来存储不同币种的交易信息
 trading_pairs = {}
@@ -370,8 +381,10 @@ class GridTrader:
         position = get_position(self.symbol)
         if position != 0:
             return False
-        up_line = round(float(data['up_line']), symbol_tick_size[self.symbol]['tick_size'])
-        down_line = round(float(data['down_line']), symbol_tick_size[self.symbol]['tick_size'])
+        order_price_round = symbol_tick_size[self.symbol]['order_price_round']
+        tick_size = symbol_tick_size[self.symbol]['tick_size']
+        up_line = round_to_step(float(data['up_line']), order_price_round, tick_size)
+        down_line = round_to_step(float(data['down_line']), order_price_round, tick_size)
         if data['direction'] != self.direction:
             # 反转的时候，需要更新交易参数
             return True
@@ -396,7 +409,8 @@ class GridTrader:
                     symbol_tick_size[self.symbol] = {
                         'tick_size': len(str(float(contract_info.order_price_round)).split('.')[-1].rstrip('0')),
                         'min_qty': len(str(float(contract_info.order_size_min)).split('.')[-1].rstrip('0')),
-                        "qty_to_contract": float(contract_info.quanto_multiplier)
+                        "qty_to_contract": float(contract_info.quanto_multiplier),
+                        "order_price_round": float(contract_info.order_price_round)
                     }
                 # 更新新的方向的参数
                 logger.info(f'{self.symbol} |更新交易参数: {json.dumps(data, ensure_ascii=False)}')
@@ -409,8 +423,8 @@ class GridTrader:
                 self.pos_for_trail = float(data['pos_for_trail'])
                 self.trail_active_percent = float(data['trail_active_price']) # 移动止盈的触发percent
                 self.trail_callback = float(data['trail_callback'])
-                self.up_line = round(float(data['up_line']), symbol_tick_size[self.symbol]['tick_size'])
-                self.down_line = round(float(data['down_line']), symbol_tick_size[self.symbol]['tick_size'])
+                self.up_line = round_to_step(float(data['up_line']), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
+                self.down_line = round_to_step(float(data['down_line']), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                 self.zone_usdt = self.total_usdt * self.every_zone_usdt # 预期一个区间要投入的金额
                 if self.current_loss_decrease > 0:
                     self.zone_usdt = self.zone_usdt * (1 - self.current_loss_decrease)
@@ -433,7 +447,7 @@ class GridTrader:
                         for config in entry_configs:
                             price_ratio, percent = config.split('_')
                             # 入场价格 = 下轨 + 价格处于区间的百分比 * 区间宽度
-                            entry_price = round(self.down_line + float(price_ratio) * 0.01 * self.interval, symbol_tick_size[self.symbol]['tick_size'])
+                            entry_price = round_to_step(self.down_line + float(price_ratio) * 0.01 * self.interval, symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                             entry_percent = float(percent) * 0.01
                             entry_zone_usdt = self.zone_usdt * entry_percent
                             entry_qty = amountConvertToContract(self.symbol, entry_zone_usdt/entry_price)
@@ -452,7 +466,7 @@ class GridTrader:
                         exit_configs = self.exit_config.split('|')
                         for config in exit_configs:
                             price_ratio, percent = config.split('_')
-                            exit_price = round(self.down_line + float(price_ratio)*0.01 * self.interval, symbol_tick_size[self.symbol]['tick_size'])
+                            exit_price = round_to_step(self.down_line + float(price_ratio)*0.01 * self.interval, symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                             exit_percent = float(percent) * 0.01
                             self.exit_list.append({
                                 'exit_price': exit_price, # 退出价格
@@ -491,7 +505,7 @@ class GridTrader:
                             price_ratio, percent = config.split('_')
                             # 入场价格 = 下轨 - 价格处于区间的百分比 * 区间宽度
                             # 做空时下轨是区间上沿的价格
-                            entry_price = round(self.down_line - (1 - float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['tick_size'])
+                            entry_price = round_to_step(self.down_line - (1 - float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                             entry_percent = float(percent) * 0.01
                             entry_zone_usdt = self.zone_usdt * entry_percent
                             entry_qty = amountConvertToContract(self.symbol, entry_zone_usdt/entry_price)
@@ -510,7 +524,7 @@ class GridTrader:
                         exit_configs = self.exit_config.split('|')
                         for config in exit_configs:
                             price_ratio, percent = config.split('_')
-                            exit_price = round(self.down_line - (float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['tick_size'])
+                            exit_price = round_to_step(self.down_line - (float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                             exit_percent = float(percent) * 0.01
                             self.exit_list.append({
                                 'exit_price': exit_price, # 退出价格
@@ -541,7 +555,7 @@ class GridTrader:
             except Exception as e:
                 logger.error(f'{self.symbol} 更新交易参数时发生错误: {str(e)}|数据：{json.dumps(data, ensure_ascii=False)}')
                 self.is_handling = False
-                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}')
+                send_wx_notification(f'{self.symbol} 更新交易参数时发生错误: {str(e)}', f'{self.symbol} 更新交易参数时发生错误: {str(e)}|数据：{json.dumps(data, ensure_ascii=False)}')
                 return None
 
     def monitor_price(self):
@@ -688,7 +702,7 @@ class GridTrader:
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
                             logger.info(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
-                            send_wx_notification(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
+                            send_wx_notification(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}", f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
                             is_profit = -1
                         if mark_price > self.trail_active_price:
                             logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
@@ -699,14 +713,14 @@ class GridTrader:
                             # 平仓
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
-                            send_wx_notification(f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束")
+                            send_wx_notification(f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束", f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束")
                             is_profit = 1
                     elif self.direction == "sell":
                         if mark_price > self.down_line:
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
                             logger.info(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
-                            send_wx_notification(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
+                            send_wx_notification(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}", f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
                             is_profit = -1
                         if mark_price < self.trail_active_price:
                             logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
@@ -717,7 +731,7 @@ class GridTrader:
                             # 平仓
                             close_position(self.symbol)
                             cancel_all_orders(self.symbol)
-                            send_wx_notification(f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束")
+                            send_wx_notification(f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束", f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束")
                             is_profit = 1
                     if is_profit != 0:
                         if is_profit > 0:
@@ -737,7 +751,7 @@ class GridTrader:
                 
             except Exception as e:
                 logger.error(f'{self.symbol} 监控价格时发生错误: {str(e)}')
-                send_wx_notification(f'{self.symbol} 监控价格时发生错误: {str(e)}')
+                send_wx_notification(f'{self.symbol} 监控价格时发生错误: {str(e)}', f'{self.symbol} 监控价格时发生错误: {str(e)}')
                 time.sleep(3)
                 
     def stop_monitoring(self):

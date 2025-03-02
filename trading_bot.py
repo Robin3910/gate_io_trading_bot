@@ -367,6 +367,7 @@ class GridTrader:
         self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
         self.pre_position = 0 # 监控中的上一个仓位值大小
         self.zone_usdt = 0 # 预期一个区间要投入的金额
+        self.finished = False # 区间的逻辑是否完成了
         
         logger.info(f'{symbol} GridTrader 初始化完成')
 
@@ -432,6 +433,7 @@ class GridTrader:
                 self.trail_low_price = 999999 # 移动止盈的最低价格
                 self.stop_loss_order_id = None # 止损单ID
                 self.threshold_position_for_update = 0 # 更新出场单的仓位阈值，只有>=这个仓位的时候，才会去更新出场单
+                self.finished = False # 区间的逻辑是否完成了
                 if self.direction == "buy":
                     # ------ 上沿 up_line 100000
                     #  ^
@@ -576,6 +578,9 @@ class GridTrader:
             if paused:
                 time.sleep(3)
                 continue
+            if self.finished:
+                time.sleep(3)
+                continue
             try:
                 # 获取当前仓位和持仓方向
                 position = get_position(self.symbol)
@@ -704,6 +709,7 @@ class GridTrader:
                             logger.info(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
                             send_wx_notification(f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}", f"{self.symbol}|做多|当前价格已经达到了止损点: {mark_price}")
                             is_profit = -1
+                            self.finished = True
                         if mark_price > self.trail_active_price:
                             logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price > self.trail_high_price:
@@ -715,6 +721,7 @@ class GridTrader:
                             cancel_all_orders(self.symbol)
                             send_wx_notification(f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束", f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束")
                             is_profit = 1
+                            self.finished = True
                     elif self.direction == "sell":
                         if mark_price > self.down_line:
                             close_position(self.symbol)
@@ -722,6 +729,7 @@ class GridTrader:
                             logger.info(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
                             send_wx_notification(f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}", f"{self.symbol}|做空|当前价格已经达到了止损点: {mark_price}")
                             is_profit = -1
+                            self.finished = True
                         if mark_price < self.trail_active_price:
                             logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price < self.trail_low_price:
@@ -733,6 +741,7 @@ class GridTrader:
                             cancel_all_orders(self.symbol)
                             send_wx_notification(f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束", f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束")
                             is_profit = 1
+                            self.finished = True
                     if is_profit != 0:
                         if is_profit > 0:
                             # 如果之前有降低仓位，则需要将仓位补上

@@ -41,7 +41,7 @@ ip_white_list = CONFIG.IP_WHITE_LIST
 gate_config = Configuration(key="baffffe996db428683cc4c9ea945ad87", secret="a9e3f7eb91f9b545ca8d690fe93a99fcb709445a68f21cbfd83fae91f4510288", host="https://fx-api-testnet.gateio.ws/api/v4")
 futures_api = FuturesApi(ApiClient(gate_config))
 
-paused = True
+paused = True # 全局总开关：是否暂停。开启后，就暂停所有策略的运行
 is_logined = False # 是否登录
 
 symbol_tick_size = {} # 币种精度
@@ -259,6 +259,14 @@ def cancel_all_orders(symbol):
         logger.error(f'{symbol}|取消挂单失败，错误: {ex}')
         send_wx_notification(f"{symbol}|取消所有挂单失败", f"取消挂单失败: {ex}")
 
+def set_leverage(symbol, leverage):
+    """设置杠杆"""
+    try:
+        futures_api.update_position_leverage(SETTLE, symbol, leverage=0, cross_leverage_limit=leverage)
+    except GateApiException as ex:
+        logger.error(f'{symbol}|设置杠杆失败，错误: {ex}')
+        return None
+
 def set_position_mode(is_dual_mode):
     """设置持仓模式"""
     # is_dual_mode 为True表示双向持仓，为False表示单向持仓
@@ -355,7 +363,6 @@ class GridTrader:
         self.down_line = 0
         self.entry_list = []
         self.exit_list = []
-        self.paused = False # 是否暂停
         self.monitor_thread = None # 监控线程
         self.loss_count = 0 # 亏损次数
         self.trail_high_price = 0 # 移动止盈的最高价格
@@ -368,16 +375,19 @@ class GridTrader:
         self.pre_position = 0 # 监控中的上一个仓位值大小
         self.zone_usdt = 0 # 预期一个区间要投入的金额
         self.finished = False # 区间的逻辑是否完成了
+        self.paused = True # 该品种是否暂停
         
         logger.info(f'{symbol} GridTrader 初始化完成')
 
     def is_need_update_trading_params(self, data):
         """判断是否需要更新交易参数"""
-        while self.is_handling:
+        if self.is_handling:
             return False
         if not is_logined:
             return False
         if paused:
+            return False
+        if self.paused:
             return False
         position = get_position(self.symbol)
         if position != 0:
@@ -403,6 +413,8 @@ class GridTrader:
                 close_position(self.symbol)
                 # 取消所有挂单
                 cancel_all_orders(self.symbol)
+                # 设置一下杠杆，默认5倍杠杆
+                set_leverage(self.symbol, 5)
 
                 if symbol_tick_size[self.symbol] is None:
                     logger.error(f'{self.symbol} 精度不存在|重新获取精度')
@@ -581,6 +593,10 @@ class GridTrader:
             if self.finished:
                 time.sleep(3)
                 continue
+            if self.paused:
+                # 当前品种暂停
+                time.sleep(3)
+                continue
             try:
                 # 获取当前仓位和持仓方向
                 position = get_position(self.symbol)
@@ -711,7 +727,7 @@ class GridTrader:
                             is_profit = -1
                             self.finished = True
                         if mark_price > self.trail_active_price:
-                            logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
+                            # logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price > self.trail_high_price:
                                 self.trail_high_price = mark_price
                         if (self.trail_high_price - mark_price) / mark_price > self.trail_callback:
@@ -731,7 +747,7 @@ class GridTrader:
                             is_profit = -1
                             self.finished = True
                         if mark_price < self.trail_active_price:
-                            logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
+                            # logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price < self.trail_low_price:
                                 self.trail_low_price = mark_price
                         if (mark_price - self.trail_low_price) / self.trail_low_price > self.trail_callback:
@@ -963,7 +979,8 @@ def get_trading_pairs():
                 'up_line': trader.up_line,
                 'down_line': trader.down_line,
                 'entry_list': trader.entry_list,
-                'exit_list': trader.exit_list
+                'exit_list': trader.exit_list,
+                'paused': trader.paused
             }
             
         # 处理 API 和 Secret 的显示
@@ -994,6 +1011,27 @@ def toggle_pause():
             "status": "success", 
             "message": "策略已暂停" if paused else "策略已启动",
             "paused": paused
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+@app.route('/toggle_symbol_pause/<symbol>', methods=['GET'])
+@login_required
+def toggle_symbol_pause(symbol):
+    try:
+        if not is_logined:
+            return jsonify({"status": "error", "message": "请先登录"})
+            
+        if symbol not in trading_pairs:
+            return jsonify({"status": "error", "message": f"交易对 {symbol} 不存在"})
+            
+        trader = trading_pairs[symbol]
+        trader.paused = not trader.paused
+        
+        return jsonify({
+            "status": "success", 
+            "message": f"{symbol} 策略已{'暂停' if trader.paused else '启动'}",
+            "paused": trader.paused
         })
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})

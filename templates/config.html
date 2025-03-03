@@ -128,6 +128,25 @@
             font-size: 12px;
             line-height: 1.4;
         }
+        .symbol-action {
+            background: none;
+            border: none;
+            color: #007bff;
+            padding: 2px 8px;
+            cursor: pointer;
+            font-size: 12px;
+            width: auto;
+            margin: 0;
+        }
+        .symbol-action:hover {
+            text-decoration: underline;
+            transform: none;
+            box-shadow: none;
+        }
+        .symbol-status {
+            font-size: 12px;
+            margin-top: 3px;
+        }
     </style>
 </head>
 <body>
@@ -197,6 +216,7 @@
                         <th>回调止盈%</th>
                         <th>入场订单</th>
                         <th>出场订单</th>
+                        <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -371,6 +391,15 @@
                                 <td>${(trader.trail_callback * 100).toFixed(2)}%</td>
                                 <td class="order-list">${formatOrderList(trader.entry_list)}</td>
                                 <td class="order-list">${formatOrderList(trader.exit_list)}</td>
+                                <td>
+                                    <button onclick="toggleSymbolPause('${symbol}')" 
+                                        class="symbol-action">
+                                        ${trader.paused ? '启动' : '暂停'}
+                                    </button>
+                                    <div class="symbol-status" style="color: ${trader.paused ? '#dc3545' : '#28a745'};">
+                                        ${trader.paused ? '已暂停' : '运行中'}
+                                    </div>
+                                </td>
                             `;
                             tbody.appendChild(row);
                         }
@@ -411,6 +440,36 @@
                 messageDiv.style.display = 'block';
                 messageDiv.className = 'message error';
                 messageDiv.textContent = '重置失败：' + error;
+            });
+        }
+
+        function toggleSymbolPause(symbol) {
+            fetch(`/toggle_symbol_pause/${symbol}`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    loadTradingPairs(); // 刷新表格数据
+                    const messageDiv = document.getElementById('message');
+                    messageDiv.style.display = 'block';
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = data.message;
+                } else {
+                    const messageDiv = document.getElementById('message');
+                    messageDiv.style.display = 'block';
+                    messageDiv.className = 'message error';
+                    messageDiv.textContent = data.message;
+                }
+            })
+            .catch(error => {
+                const messageDiv = document.getElementById('message');
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '操作失败：' + error;
             });
         }
 

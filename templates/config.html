@@ -396,6 +396,10 @@
                                         class="symbol-action">
                                         ${trader.paused ? '启动' : '暂停'}
                                     </button>
+                                    <button onclick="cleanSymbol('${symbol}')" 
+                                        class="symbol-action" style="color: #dc3545;">
+                                        清理
+                                    </button>
                                     <div class="symbol-status" style="color: ${trader.paused ? '#dc3545' : '#28a745'};">
                                         ${trader.paused ? '已暂停' : '运行中'}
                                     </div>
@@ -470,6 +474,39 @@
                 messageDiv.style.display = 'block';
                 messageDiv.className = 'message error';
                 messageDiv.textContent = '操作失败：' + error;
+            });
+        }
+
+        function cleanSymbol(symbol) {
+            if (!confirm(`清理数据之前需要先停掉TV警报，确认是否进行清理？`)) {
+                return;
+            }
+            
+            fetch(`/clean_symbol/${symbol}`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                const messageDiv = document.getElementById('message');
+                messageDiv.style.display = 'block';
+                if (data.status === 'success') {
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = data.message;
+                    // 刷新交易对状态表格
+                    loadTradingPairs();
+                } else {
+                    messageDiv.className = 'message error';
+                    messageDiv.textContent = data.message;
+                }
+            })
+            .catch(error => {
+                const messageDiv = document.getElementById('message');
+                messageDiv.style.display = 'block';
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '清理失败：' + error;
             });
         }
 

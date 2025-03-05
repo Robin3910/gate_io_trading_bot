@@ -1036,6 +1036,32 @@ def toggle_symbol_pause(symbol):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
+@app.route('/clean_symbol/<symbol>', methods=['GET'])
+@login_required
+def clean_symbol(symbol):
+    try:
+        if not is_logined:
+            return jsonify({"status": "error", "message": "请先登录"})
+            
+        if symbol not in trading_pairs:
+            return jsonify({"status": "error", "message": f"交易对 {symbol} 不存在"})
+        
+        # 平仓
+        close_position(symbol)
+        # 取消所有挂单
+        cancel_all_orders(symbol)
+        # 从trading_pairs中删除该交易对
+        del trading_pairs[symbol]
+        
+        logger.info(f'{symbol} 清理完成')
+        return jsonify({
+            "status": "success", 
+            "message": f"{symbol} 清理完成"
+        })
+    except Exception as e:
+        logger.error(f'{symbol} 清理失败: {str(e)}')
+        return jsonify({"status": "error", "message": str(e)})
+
 if __name__ == '__main__':
 
     # 启动Flask服务

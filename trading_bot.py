@@ -635,9 +635,9 @@ class GridTrader:
                     expected_entry_size += entry['qty']
                 # logger.info(f'{self.symbol} 预期入场总数量: {expected_entry_size}')
 
-                # 需要补入场单
-                if total_entry_size + self.position < expected_entry_size:
-                    logger.info(f'{self.symbol} 需要补入场单|预期入场数量：{expected_entry_size}|当前挂单+持仓：{total_entry_size+self.position}')
+                # 需要修改入场单
+                if total_entry_size + self.position < expected_entry_size or total_entry_size + self.position > expected_entry_size * 1.02:
+                    logger.info(f'{self.symbol} 需要修改入场单|预期入场数量：{expected_entry_size}|当前挂单+持仓：{total_entry_size+self.position}')
                     # 取消所有现有的入场挂单
                     if entry_orders:
                         batch_cancel_orders(self.symbol, entry_orders)

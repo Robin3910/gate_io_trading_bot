@@ -644,7 +644,7 @@ class GridTrader:
                     
                     # 重新计算并设置入场单
                     new_entry_orders = []
-                    remaining_position = position  # 当前持仓量
+                    remaining_position = self.position  # 当前持仓量
                     
                     for entry in self.entry_list:  # 直接遍历原始列表
                         if remaining_position >= entry['qty']:

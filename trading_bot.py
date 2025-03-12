@@ -376,6 +376,7 @@ class GridTrader:
         self.zone_usdt = 0 # 预期一个区间要投入的金额
         self.finished = False # 区间的逻辑是否完成了
         self.paused = True # 该品种是否暂停
+        self.leverage = 5 # 杠杆
         
         logger.info(f'{symbol} GridTrader 初始化完成')
 
@@ -414,7 +415,8 @@ class GridTrader:
                 # 取消所有挂单
                 cancel_all_orders(self.symbol)
                 # 设置一下杠杆，默认5倍杠杆
-                set_leverage(self.symbol, 5)
+                self.leverage = int(data['leverage'])
+                set_leverage(self.symbol, self.leverage)
 
                 if symbol_tick_size[self.symbol] is None:
                     logger.error(f'{self.symbol} 精度不存在|重新获取精度')
@@ -435,7 +437,7 @@ class GridTrader:
                 self.exit_config = data['exit_config']
                 self.pos_for_trail = float(data['pos_for_trail'])
                 self.trail_active_percent = float(data['trail_active_price']) # 移动止盈的触发percent
-                self.trail_callback = float(data['trail_callback'])
+                self.trail_callback = float(data['trail_callback']) * self.interval # 移动止盈出场回调的价格，通过interval来计算
                 self.up_line = round_to_step(float(data['up_line']), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                 self.down_line = round_to_step(float(data['down_line']), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                 self.zone_usdt = self.total_usdt * self.every_zone_usdt # 预期一个区间要投入的金额
@@ -730,7 +732,7 @@ class GridTrader:
                             # logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price > self.trail_high_price:
                                 self.trail_high_price = mark_price
-                        if (self.trail_high_price - mark_price) / mark_price > self.trail_callback:
+                        if (self.trail_high_price - mark_price) > self.trail_callback:
                             logger.info(f"{self.symbol}|做多|当前价格从最高点回落超过{self.trail_callback}，平仓|区间逻辑结束")
                             # 平仓
                             close_position(self.symbol)
@@ -750,7 +752,7 @@ class GridTrader:
                             # logger.info(f'{self.symbol} 当前价格已经达到了移动止盈的触发点: {mark_price}')
                             if mark_price < self.trail_low_price:
                                 self.trail_low_price = mark_price
-                        if (mark_price - self.trail_low_price) / self.trail_low_price > self.trail_callback:
+                        if (mark_price - self.trail_low_price) > self.trail_callback:
                             logger.info(f"{self.symbol}|做空|当前价格从最低点回升超过{self.trail_callback}，平仓|区间逻辑结束")
                             # 平仓
                             close_position(self.symbol)

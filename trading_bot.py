@@ -463,7 +463,7 @@ class GridTrader:
                         for config in entry_configs:
                             price_ratio, percent = config.split('_')
                             # 入场价格 = 下轨 + 价格处于区间的百分比 * 区间宽度
-                            entry_price = round_to_step(self.down_line + float(price_ratio) * 0.01 * self.interval, symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
+                            entry_price = round_to_step(self.down_line + (float(price_ratio) * 0.01 * self.interval), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                             entry_percent = float(percent) * 0.01
                             entry_zone_usdt = self.zone_usdt * entry_percent
                             entry_qty = amountConvertToContract(self.symbol, entry_zone_usdt/entry_price)
@@ -521,8 +521,8 @@ class GridTrader:
                         for config in entry_configs:
                             price_ratio, percent = config.split('_')
                             # 入场价格 = 下轨 - 价格处于区间的百分比 * 区间宽度
-                            # 做空时下轨是区间上沿的价格
-                            entry_price = round_to_step(self.down_line - (1 - float(price_ratio) * 0.01) * self.interval, symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
+                            # 做空时下轨是区间上沿的价格 
+                            entry_price = round_to_step(self.down_line - (float(price_ratio) * 0.01 * self.interval), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                             entry_percent = float(percent) * 0.01
                             entry_zone_usdt = self.zone_usdt * entry_percent
                             entry_qty = amountConvertToContract(self.symbol, entry_zone_usdt/entry_price)

@@ -437,7 +437,6 @@ class GridTrader:
                 self.exit_config = data['exit_config']
                 self.pos_for_trail = float(data['pos_for_trail'])
                 self.trail_active_percent = float(data['trail_active_price']) # 移动止盈的触发percent
-                self.trail_callback = float(data['trail_callback']) * self.interval # 移动止盈出场回调的价格，通过interval来计算
                 self.up_line = round_to_step(float(data['up_line']), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                 self.down_line = round_to_step(float(data['down_line']), symbol_tick_size[self.symbol]['order_price_round'], symbol_tick_size[self.symbol]['tick_size'])
                 self.zone_usdt = self.total_usdt * self.every_zone_usdt # 预期一个区间要投入的金额
@@ -456,6 +455,7 @@ class GridTrader:
                     # ------ 下沿 down_line 90000
                     self.interval = round(self.up_line - self.down_line, symbol_tick_size[self.symbol]['tick_size'])
                     self.trail_active_price = round(self.down_line + self.interval * self.trail_active_percent, symbol_tick_size[self.symbol]['tick_size'])
+                    self.trail_callback = float(data['trail_callback']) * self.interval # 移动止盈出场回调的价格，通过interval来计算
                     # 解析入场配置
                     self.entry_list = []
                     if self.entry_config:
@@ -513,6 +513,7 @@ class GridTrader:
                     # ------ 下沿 up_line 90000
                     self.interval = round(self.down_line - self.up_line, symbol_tick_size[self.symbol]['tick_size'])
                     self.trail_active_price = round(self.down_line - self.interval * self.trail_active_percent, symbol_tick_size[self.symbol]['tick_size'])
+                    self.trail_callback = float(data['trail_callback']) * self.interval # 移动止盈出场回调的价格，通过interval来计算
                     # 解析入场配置
                     self.entry_list = []
                     if self.entry_config:
